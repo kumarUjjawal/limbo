@@ -267,11 +267,15 @@ pub fn join_lhs_and_rhs<'a>(
             }
         }
 
-        // Apply closed-range bonus for columns with both lower and upper bounds
+        // Apply closed-range adjustment for columns with both lower and upper bounds.
+        // We already multiplied per-bound selectivities, so scale by the factor
+        // relative to a single range predicate to avoid double-counting.
         for (_, has_lower, has_upper) in &column_bounds {
             if *has_lower && *has_upper {
-                all_multiplier *= params.closed_range_selectivity_factor;
-                local_multiplier *= params.closed_range_selectivity_factor;
+                let range_selectivity = params.sel_range.max(f64::EPSILON);
+                let adjust = params.closed_range_selectivity_factor / range_selectivity;
+                all_multiplier *= adjust;
+                local_multiplier *= adjust;
             }
         }
 
@@ -780,48 +784,58 @@ pub fn join_lhs_and_rhs<'a>(
             (input_cardinality as f64 * local_filter_multiplier * params.fanout_index_seek_unique)
                 .ceil() as usize
         } else {
-            // INDEX SEEK: fanout depends on matched columns
+            // INDEX SEEK: fanout depends on matched columns. For range scans, fall
+            // back to selectivity-based estimation to avoid treating them as point lookups.
             let index = index.as_ref().unwrap();
             let matched_cols = constraint_refs.len();
             let total_cols = index.columns.len();
             let unmatched = total_cols.saturating_sub(matched_cols);
 
-            // Try to get actual fanout from ANALYZE statistics (sqlite_stat1).
-            // Stats give us avg_rows_per_distinct_prefix[i] = avg rows sharing
-            // the same values in first i+1 columns.
-            let table_name = rhs_table_reference.table.get_name();
-            let stats_fanout = analyze_stats
-                .table_stats(table_name)
-                .and_then(|ts| ts.index_stats.get(&index.name))
-                .and_then(|is| {
-                    // matched_cols=1 means we use prefix of length 1, which is index 0
-                    if matched_cols > 0 && matched_cols <= is.avg_rows_per_distinct_prefix.len() {
-                        Some(is.avg_rows_per_distinct_prefix[matched_cols - 1] as f64)
-                    } else {
-                        None
-                    }
-                });
-
-            let fanout = if let Some(f) = stats_fanout {
-                // Use actual statistics from ANALYZE
-                f
-            } else if matched_cols >= total_cols {
-                // Full key match: very few rows per lookup
-                if index.unique {
-                    params.fanout_index_seek_unique // Unique index + full key = exactly 1 row
-                } else {
-                    params.fanout_index_seek_non_unique // Non-unique but full key = probably few duplicates
-                }
+            let has_range_constraints = constraint_refs.iter().any(|cref| {
+                cref.eq.is_none() && (cref.lower_bound.is_some() || cref.upper_bound.is_some())
+            });
+            if has_range_constraints {
+                (input_cardinality as f64 * *rhs_base_rows * output_cardinality_multiplier).ceil()
+                    as usize
             } else {
-                // Partial key match: use 4^unmatched heuristic
-                // Example: 2-column index, match 1 → 4^1 = 4 rows per lookup
-                params
-                    .fanout_index_seek_per_unmatched_column
-                    .powi(unmatched as i32)
-            };
+                // Try to get actual fanout from ANALYZE statistics (sqlite_stat1).
+                // Stats give us avg_rows_per_distinct_prefix[i] = avg rows sharing
+                // the same values in first i+1 columns.
+                let table_name = rhs_table_reference.table.get_name();
+                let stats_fanout = analyze_stats
+                    .table_stats(table_name)
+                    .and_then(|ts| ts.index_stats.get(&index.name))
+                    .and_then(|is| {
+                        // matched_cols=1 means we use prefix of length 1, which is index 0
+                        if matched_cols > 0 && matched_cols <= is.avg_rows_per_distinct_prefix.len()
+                        {
+                            Some(is.avg_rows_per_distinct_prefix[matched_cols - 1] as f64)
+                        } else {
+                            None
+                        }
+                    });
 
-            // Final: input_rows × fanout × local_filters
-            (input_cardinality as f64 * fanout * local_filter_multiplier).ceil() as usize
+                let fanout = if let Some(f) = stats_fanout {
+                    // Use actual statistics from ANALYZE
+                    f
+                } else if matched_cols >= total_cols {
+                    // Full key match: very few rows per lookup
+                    if index.unique {
+                        params.fanout_index_seek_unique // Unique index + full key = exactly 1 row
+                    } else {
+                        params.fanout_index_seek_non_unique // Non-unique but full key = probably few duplicates
+                    }
+                } else {
+                    // Partial key match: use 4^unmatched heuristic
+                    // Example: 2-column index, match 1 → 4^1 = 4 rows per lookup
+                    params
+                        .fanout_index_seek_per_unmatched_column
+                        .powi(unmatched as i32)
+                };
+
+                // Final: input_rows × fanout × local_filters
+                (input_cardinality as f64 * fanout * local_filter_multiplier).ceil() as usize
+            }
         }
     } else {
         // HashJoin, VirtualTable, Subquery: use full selectivity formula

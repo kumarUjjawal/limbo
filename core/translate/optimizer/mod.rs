@@ -47,8 +47,8 @@ use super::{
     emitter::Resolver,
     plan::{
         DeletePlan, GroupBy, IterationDirection, JoinOrderMember, JoinedTable, MultiIndexBranch,
-        MultiIndexScanOp, Operation, Plan, Search, SeekDef, SeekKey, SelectPlan, TableReferences,
-        UpdatePlan, WhereTerm,
+        MultiIndexScanOp, Operation, Plan, Search, SeekDef, SeekKey, SelectPlan, SetOperation,
+        TableReferences, UpdatePlan, WhereTerm,
     },
     planner::TableMask,
 };

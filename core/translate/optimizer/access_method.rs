@@ -519,9 +519,12 @@ pub fn consider_multi_index_union(
             continue;
         }
 
-        let ast::Expr::Binary(_, ast::Operator::Or, _) = &term.expr else {
+        if !matches!(
+            &term.expr,
+            ast::Expr::Binary(_, ast::Operator::Or, _) | ast::Expr::InList { not: false, .. }
+        ) {
             continue;
-        };
+        }
 
         let Some(decomposition) = analyze_or_term_for_multi_index(
             where_term_idx,

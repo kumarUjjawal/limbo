@@ -1,0 +1,35 @@
+@database :memory:
+
+test inlist-index-ordering {
+    CREATE TABLE users(id INTEGER PRIMARY KEY, first_name TEXT, age INTEGER);
+    CREATE TABLE orders(id INTEGER PRIMARY KEY, user_id INTEGER, status TEXT);
+    CREATE TABLE order_items(order_id INTEGER, product_id INTEGER);
+    CREATE TABLE products(id INTEGER PRIMARY KEY, name TEXT, price REAL);
+    CREATE TABLE reviews(product_id INTEGER, user_id INTEGER, rating INTEGER);
+
+    CREATE INDEX idx_orders_status ON orders(status);
+    CREATE INDEX idx_users_age ON users(age);
+    CREATE INDEX idx_orders_user ON orders(user_id);
+    CREATE INDEX idx_order_items_order ON order_items(order_id);
+    CREATE INDEX idx_order_items_product ON order_items(product_id);
+    CREATE INDEX idx_reviews_user_prod ON reviews(user_id, product_id);
+
+    INSERT INTO users VALUES (1,'Shawn',30),(2,'Vanessa',28),(3,'Felicia',27);
+    INSERT INTO orders VALUES (1,2,'shipped'),(2,1,'delivered'),(3,3,'shipped');
+    INSERT INTO order_items VALUES (1,101),(2,102),(3,103);
+    INSERT INTO products VALUES (101,'accessories',60),(102,'shorts',70),(103,'sweatshirt',80);
+
+    select u.first_name, p.name, o.status, r.rating
+    from users u
+    inner join orders o on u.id = o.user_id and o.status in ('shipped', 'delivered')
+    left join order_items oi on o.id = oi.order_id
+    inner join products p on oi.product_id = p.id and p.price > 50
+    left join reviews r on p.id = r.product_id and r.user_id = u.id and r.rating >= 4
+    where u.age between 25 and 35
+    limit 10;
+}
+expect {
+    Shawn|shorts|delivered|
+    Vanessa|accessories|shipped|
+    Felicia|sweatshirt|shipped|
+}

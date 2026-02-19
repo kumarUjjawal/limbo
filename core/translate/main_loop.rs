@@ -15,13 +15,13 @@ use super::{
     order_by::{order_by_sorter_insert, sorter_insert},
     plan::{
         Aggregate, DistinctCtx, Distinctness, EvalAt, HashJoinOp, IterationDirection,
-        JoinOrderMember, JoinedTable, MultiIndexScanOp, NonFromClauseSubquery, Operation,
-        QueryDestination, Scan, Search, SeekDef, SeekKey, SeekKeyComponent, SelectPlan,
-        SetOperation, TableReferences, WhereTerm,
+        JoinOrderMember, JoinedTable, MultiIndexOutputOrder, MultiIndexScanOp,
+        NonFromClauseSubquery, Operation, QueryDestination, Scan, Search, SeekDef, SeekKey,
+        SeekKeyComponent, SelectPlan, SetOperation, TableReferences, WhereTerm,
     },
 };
 use crate::{
-    schema::{Index, Table},
+    schema::{Index, PseudoCursorType, Table},
     translate::{
         collate::{get_collseq_from_expr, resolve_comparison_collseq, CollationSeq},
         emitter::{prepare_cdc_if_necessary, HashCtx},
@@ -852,6 +852,13 @@ fn emit_multi_index_scan_loop(
     // For intersection, we need two rowsets (swap between them for multi-way intersection)
     // For union, we only need one rowset
     let is_intersection = multi_idx_op.set_op == SetOperation::Intersection;
+    let use_index_order = multi_idx_op.output_order == MultiIndexOutputOrder::IndexKey;
+    if use_index_order {
+        turso_assert!(
+            !is_intersection,
+            "IndexKey output is only supported for union scans"
+        );
+    }
 
     // Allocate registers for RowSets
     let rowset1_reg = program.alloc_register();
@@ -871,6 +878,49 @@ fn emit_multi_index_scan_loop(
             dest: rowset2_reg,
             dest_end: None,
         });
+    }
+
+    let mut sorter_cursor_id: Option<usize> = None;
+    let mut sorter_pseudo_cursor_id: Option<usize> = None;
+    let mut sorter_record_reg: Option<usize> = None;
+    let mut sort_key_count: usize = 0;
+
+    if use_index_order {
+        let sort_index = multi_idx_op
+            .sort_index
+            .as_ref()
+            .expect("IndexKey output requires a sort index");
+        sort_key_count = sort_index.columns.len();
+        let sorter_column_count = sort_key_count + 1; // append rowid for stable ordering
+        let mut order_and_collations: Vec<(SortOrder, Option<CollationSeq>)> = sort_index
+            .columns
+            .iter()
+            .map(|col| (col.order, col.collation))
+            .collect();
+        order_and_collations.push((SortOrder::Asc, None));
+
+        let cursor_id = program.alloc_cursor_id(CursorType::Sorter);
+        program.emit_insn(Insn::SorterOpen {
+            cursor_id,
+            columns: sorter_column_count,
+            order_and_collations,
+        });
+        let pseudo_cursor_id = program.alloc_cursor_id(CursorType::Pseudo(PseudoCursorType {
+            column_count: sorter_column_count,
+        }));
+        let record_reg = program.alloc_register();
+        program.emit_insn(Insn::OpenPseudo {
+            cursor_id: pseudo_cursor_id,
+            content_reg: record_reg,
+            num_fields: sorter_column_count,
+        });
+
+        sorter_cursor_id = Some(cursor_id);
+        sorter_pseudo_cursor_id = Some(pseudo_cursor_id);
+        sorter_record_reg = Some(record_reg);
+        t_ctx
+            .multi_index_sorters
+            .insert(table.internal_id, cursor_id);
     }
 
     // For intersection, we track which rowset to read from and write to
@@ -950,7 +1000,45 @@ fn emit_multi_index_scan_loop(
         // Note: For Union, we use RowSetAdd (not RowSetTest) for all branches.
         // Deduplication happens in RowSetRead via sort + dedup.
         // For Intersection, batch semantics are handled in the intersection-specific code.
-        if is_intersection {
+        if use_index_order {
+            let skip_dup_label = program.allocate_label();
+            program.emit_insn(Insn::RowSetTest {
+                rowset_reg: rowset1_reg,
+                pc_if_found: skip_dup_label,
+                value_reg: rowid_reg,
+                batch: branch_idx as i32,
+            });
+
+            let sort_index = multi_idx_op
+                .sort_index
+                .as_ref()
+                .expect("IndexKey output requires sort index");
+            let sorter_cursor_id = sorter_cursor_id.expect("sorter cursor must be initialized");
+            let sorter_record_reg = sorter_record_reg.expect("sorter record reg must be set");
+            let sorter_column_count = sort_key_count + 1;
+            let sort_key_start_reg = program.alloc_registers(sorter_column_count);
+            for (i, _) in sort_index.columns.iter().enumerate() {
+                program.emit_insn(Insn::Column {
+                    cursor_id: branch_cursor_id,
+                    column: i,
+                    dest: sort_key_start_reg + i,
+                    default: None,
+                });
+            }
+            program.emit_insn(Insn::Copy {
+                src_reg: rowid_reg,
+                dst_reg: sort_key_start_reg + sort_key_count,
+                extra_amount: 0,
+            });
+            sorter_insert(
+                program,
+                sort_key_start_reg,
+                sorter_column_count,
+                sorter_cursor_id,
+                sorter_record_reg,
+            );
+            program.preassign_label_to_next_insn(skip_dup_label);
+        } else if is_intersection {
             if branch_idx == 0 {
                 // First branch: just add to rowset1
                 program.emit_insn(Insn::RowSetAdd {
@@ -1009,41 +1097,66 @@ fn emit_multi_index_scan_loop(
         }
     }
 
-    // Determine which rowset to read from for final results
-    let final_rowset = if is_intersection && multi_idx_op.branches.len() > 1 {
-        // For intersection:
-        // - Branch 0: writes to rowset1 (rowset1 is write-only, never tested)
-        // - Branch 1: tests against rowset1, writes matches to rowset2
-        // - Branch 2: tests against rowset2, writes matches to rowset1 (after swap)
-        // - etc.
-        //
-        // After N branches, the results are in the rowset that branch N-1 wrote to.
-        // Branch 0 writes to rowset1, branch 1 writes to rowset2, branch 2 writes to rowset1...
-        // Number of swaps = N - 2 (swaps happen after branches 1, 2, ... N-2)
-        //
-        // For 2 branches: 0 swaps, final is rowset2 (branch 1 wrote there)
-        // For 3 branches: 1 swap, final is rowset1 (branch 2 wrote there after swap)
-        // For 4 branches: 2 swaps, final is rowset2
-        //
-        // Pattern: N branches -> (N-2) swaps
-        // If (N-2) is even -> rowset2, if odd -> rowset1
-        let num_swaps = multi_idx_op.branches.len().saturating_sub(2);
-        if num_swaps % 2 == 0 {
-            rowset2_reg
+    if use_index_order {
+        let sorter_cursor_id = sorter_cursor_id.expect("IndexKey output requires sorter cursor");
+        let sorter_pseudo_cursor_id =
+            sorter_pseudo_cursor_id.expect("IndexKey output requires pseudo cursor");
+        let sorter_record_reg =
+            sorter_record_reg.expect("IndexKey output requires sorter record reg");
+
+        program.emit_insn(Insn::SorterSort {
+            cursor_id: sorter_cursor_id,
+            pc_if_empty: loop_end,
+        });
+        program.preassign_label_to_next_insn(loop_start);
+        program.emit_insn(Insn::SorterData {
+            cursor_id: sorter_cursor_id,
+            dest_reg: sorter_record_reg,
+            pseudo_cursor: sorter_pseudo_cursor_id,
+        });
+        program.emit_insn(Insn::Column {
+            cursor_id: sorter_pseudo_cursor_id,
+            column: sort_key_count,
+            dest: rowid_reg,
+            default: None,
+        });
+    } else {
+        // Determine which rowset to read from for final results
+        let final_rowset = if is_intersection && multi_idx_op.branches.len() > 1 {
+            // For intersection:
+            // - Branch 0: writes to rowset1 (rowset1 is write-only, never tested)
+            // - Branch 1: tests against rowset1, writes matches to rowset2
+            // - Branch 2: tests against rowset2, writes matches to rowset1 (after swap)
+            // - etc.
+            //
+            // After N branches, the results are in the rowset that branch N-1 wrote to.
+            // Branch 0 writes to rowset1, branch 1 writes to rowset2, branch 2 writes to rowset1...
+            // Number of swaps = N - 2 (swaps happen after branches 1, 2, ... N-2)
+            //
+            // For 2 branches: 0 swaps, final is rowset2 (branch 1 wrote there)
+            // For 3 branches: 1 swap, final is rowset1 (branch 2 wrote there after swap)
+            // For 4 branches: 2 swaps, final is rowset2
+            //
+            // Pattern: N branches -> (N-2) swaps
+            // If (N-2) is even -> rowset2, if odd -> rowset1
+            let num_swaps = multi_idx_op.branches.len().saturating_sub(2);
+            if num_swaps % 2 == 0 {
+                rowset2_reg
+            } else {
+                rowset1_reg
+            }
         } else {
             rowset1_reg
-        }
-    } else {
-        rowset1_reg
-    };
+        };
 
-    // Now read from RowSet and fetch actual rows
-    program.preassign_label_to_next_insn(loop_start);
-    program.emit_insn(Insn::RowSetRead {
-        rowset_reg: final_rowset,
-        pc_if_empty: loop_end,
-        dest_reg: rowid_reg,
-    });
+        // Now read from RowSet and fetch actual rows
+        program.preassign_label_to_next_insn(loop_start);
+        program.emit_insn(Insn::RowSetRead {
+            rowset_reg: final_rowset,
+            pc_if_empty: loop_end,
+            dest_reg: rowid_reg,
+        });
+    }
 
     // Seek to the row in the table
     let skip_label = program.allocate_label();
@@ -2278,11 +2391,18 @@ pub fn close_loop(
             }
             Operation::MultiIndexScan(_) => {
                 // MultiIndexScan uses RowSetRead for iteration - the next is handled
-                // at the end of the RowSet read loop in emit_multi_index_scan_loop
                 program.resolve_label(loop_labels.next, program.offset());
-                program.emit_insn(Insn::Goto {
-                    target_pc: loop_labels.loop_start,
-                });
+                if let Some(sorter_cursor_id) = t_ctx.multi_index_sorters.get(&table.internal_id) {
+                    program.emit_insn(Insn::SorterNext {
+                        cursor_id: *sorter_cursor_id,
+                        pc_if_next: loop_labels.loop_start,
+                    });
+                } else {
+                    // at the end of the RowSet read loop in emit_multi_index_scan_loop
+                    program.emit_insn(Insn::Goto {
+                        target_pc: loop_labels.loop_start,
+                    });
+                }
                 program.preassign_label_to_next_insn(loop_labels.loop_end);
             }
         }

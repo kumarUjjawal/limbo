@@ -218,9 +218,10 @@ pub struct TableConstraints {
     pub candidates: Vec<ConstraintUseCandidate>,
 }
 
-/// Estimate selectivity for IN expressions given the number of values and table row count.
-fn estimate_in_selectivity(in_list_len: f64, row_count: f64, not: bool) -> f64 {
-    let selectivity = (in_list_len / row_count).min(1.0);
+/// Estimate selectivity for IN expressions given the number of values and
+/// per-value equality selectivity.
+fn estimate_in_selectivity(in_list_len: f64, per_value_selectivity: f64, not: bool) -> f64 {
+    let selectivity = (in_list_len * per_value_selectivity).min(1.0);
     if not {
         1.0 - selectivity
     } else {
@@ -320,7 +321,19 @@ fn estimate_selectivity(
         ConstraintOperator::In {
             not,
             estimated_values,
-        } => estimate_in_selectivity(estimated_values, row_count as f64, not),
+        } => {
+            let per_value_selectivity = estimate_selectivity(
+                schema,
+                table_name,
+                column,
+                column_pos,
+                available_indexes,
+                ast::Operator::Equals.into(),
+                params,
+                is_rowid,
+            );
+            estimate_in_selectivity(estimated_values, per_value_selectivity, not)
+        }
         _ => params.sel_other,
     }
 }
@@ -908,19 +921,24 @@ pub fn constraints_from_where_clause(
             // Handle IN list: col IN (val1, val2, ...)
             if let ast::Expr::InList { lhs, not, rhs } = &term.expr {
                 let estimated_values = rhs.len() as f64;
-                let table_stats = schema
-                    .analyze_stats
-                    .table_stats(table_reference.table.get_name());
-                let row_count = table_stats
-                    .and_then(|s| s.row_count)
-                    .unwrap_or(params.rows_per_table_fallback as u64)
-                    as f64;
-                let selectivity = estimate_in_selectivity(estimated_values, row_count, *not);
 
                 match lhs.as_ref() {
                     ast::Expr::Column { table, column, .. }
                         if *table == table_reference.internal_id =>
                     {
+                        let table_column = &table_reference.table.columns()[*column];
+                        let per_value_selectivity = estimate_selectivity(
+                            schema,
+                            table_reference.table.get_name(),
+                            Some(table_column),
+                            Some(*column),
+                            available_indexes,
+                            ast::Operator::Equals.into(),
+                            params,
+                            false,
+                        );
+                        let selectivity =
+                            estimate_in_selectivity(estimated_values, per_value_selectivity, *not);
                         cs.constraints.push(Constraint {
                             where_clause_pos: (i, BinaryExprSide::Rhs),
                             operator: ConstraintOperator::In {
@@ -937,6 +955,23 @@ pub fn constraints_from_where_clause(
                         });
                     }
                     ast::Expr::RowId { table, .. } if *table == table_reference.internal_id => {
+                        let (col, col_pos) = if let Some(alias) = rowid_alias_column {
+                            (Some(&table_reference.table.columns()[alias]), Some(alias))
+                        } else {
+                            (None, None)
+                        };
+                        let per_value_selectivity = estimate_selectivity(
+                            schema,
+                            table_reference.table.get_name(),
+                            col,
+                            col_pos,
+                            available_indexes,
+                            ast::Operator::Equals.into(),
+                            params,
+                            true,
+                        );
+                        let selectivity =
+                            estimate_in_selectivity(estimated_values, per_value_selectivity, *not);
                         cs.constraints.push(Constraint {
                             where_clause_pos: (i, BinaryExprSide::Rhs),
                             operator: ConstraintOperator::In {
@@ -972,19 +1007,27 @@ pub fn constraints_from_where_clause(
                 // Only use as constraint if NOT correlated
                 if !subquery.correlated {
                     let estimated_values = params.in_subquery_rows;
-                    let table_stats = schema
-                        .analyze_stats
-                        .table_stats(table_reference.table.get_name());
-                    let row_count = table_stats
-                        .and_then(|s| s.row_count)
-                        .unwrap_or(params.rows_per_table_fallback as u64)
-                        as f64;
-                    let selectivity = estimate_in_selectivity(estimated_values, row_count, *not_in);
 
                     match lhs_expr.as_ref() {
                         ast::Expr::Column { table, column, .. }
                             if *table == table_reference.internal_id =>
                         {
+                            let table_column = &table_reference.table.columns()[*column];
+                            let per_value_selectivity = estimate_selectivity(
+                                schema,
+                                table_reference.table.get_name(),
+                                Some(table_column),
+                                Some(*column),
+                                available_indexes,
+                                ast::Operator::Equals.into(),
+                                params,
+                                false,
+                            );
+                            let selectivity = estimate_in_selectivity(
+                                estimated_values,
+                                per_value_selectivity,
+                                *not_in,
+                            );
                             cs.constraints.push(Constraint {
                                 where_clause_pos: (i, BinaryExprSide::Rhs),
                                 operator: ConstraintOperator::In {
@@ -1001,6 +1044,26 @@ pub fn constraints_from_where_clause(
                             });
                         }
                         ast::Expr::RowId { table, .. } if *table == table_reference.internal_id => {
+                            let (col, col_pos) = if let Some(alias) = rowid_alias_column {
+                                (Some(&table_reference.table.columns()[alias]), Some(alias))
+                            } else {
+                                (None, None)
+                            };
+                            let per_value_selectivity = estimate_selectivity(
+                                schema,
+                                table_reference.table.get_name(),
+                                col,
+                                col_pos,
+                                available_indexes,
+                                ast::Operator::Equals.into(),
+                                params,
+                                true,
+                            );
+                            let selectivity = estimate_in_selectivity(
+                                estimated_values,
+                                per_value_selectivity,
+                                *not_in,
+                            );
                             cs.constraints.push(Constraint {
                                 where_clause_pos: (i, BinaryExprSide::Rhs),
                                 operator: ConstraintOperator::In {
@@ -1631,7 +1694,7 @@ pub fn flatten_or_expr(expr: &ast::Expr) -> Vec<&ast::Expr> {
     }
 }
 
-/// Analyzes an OR expression to determine if it can be optimized with a multi-index scan.
+/// Analyzes an OR expression or IN-list to determine if it can be optimized with a multi-index scan.
 ///
 /// Returns `Some(OrClauseDecomposition)` if the OR term:
 /// 1. Is a simple OR of indexable terms
@@ -1650,12 +1713,17 @@ pub fn analyze_or_term_for_multi_index(
     schema: &Schema,
     params: &CostModelParams,
 ) -> Option<OrClauseDecomposition> {
-    // Only consider OR expressions
-    let ast::Expr::Binary(_, ast::Operator::Or, _) = expr else {
-        return None;
+    let disjuncts: Vec<ast::Expr> = match expr {
+        ast::Expr::Binary(_, ast::Operator::Or, _) => flatten_or_expr(expr)
+            .into_iter()
+            .map(|expr| expr.clone())
+            .collect(),
+        ast::Expr::InList { lhs, not, rhs } if !*not => rhs
+            .iter()
+            .map(|rhs_expr| ast::Expr::Binary(lhs.clone(), ast::Operator::Equals, rhs_expr.clone()))
+            .collect(),
+        _ => return None,
     };
-
-    let disjuncts = flatten_or_expr(expr);
 
     // Need at least 2 disjuncts for multi-index scan to be useful
     if disjuncts.len() < 2 {
@@ -1673,7 +1741,7 @@ pub fn analyze_or_term_for_multi_index(
     let mut analyzed_disjuncts = Vec::new();
     let mut all_indexable = true;
 
-    for disjunct_expr in disjuncts {
+    for disjunct_expr in &disjuncts {
         match analyze_binary_term_for_index(
             disjunct_expr,
             where_term_idx,
