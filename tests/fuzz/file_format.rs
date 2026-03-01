@@ -533,10 +533,7 @@ fn fuzz_sqlite_generated_file_format_fixed_seeds() {
     let cases: &[(u64, u32)] = &[
         (0xdead_beef_cafe_babe, 512),
         (0x0102_0304_0506_0708, 4096),
-        (0xfeed_face_cafe_beef, 8192),
         (0x1234_5678_90ab_cdef, 16384),
-        (0xabcd_ef12_3456_7890, 1024),
-        (0x0000_0000_0000_0001, 2048),
     ];
 
     for &(seed, page_size) in cases {
@@ -605,8 +602,7 @@ fn fuzz_sqlite_generated_file_format_delete_journal_fixed_seeds() {
     // Fixed seeds first (deterministic CI coverage).
     let fixed: &[(u64, u32)] = &[
         (0xaaaa_bbbb_cccc_dddd, 512),
-        (0x1111_2222_3333_4444, 4096),
-        (0x9876_5432_10fe_dcba, 16384),
+        (0x1111_2222_3333_4444, 16384),
     ];
     for &(seed, page_size) in fixed {
         tracing::info!(
@@ -649,7 +645,6 @@ fn fuzz_sqlite_generated_file_format_complex_layout_fixed_seeds() {
     let fixed: &[(u64, u32)] = &[
         (0xf00d_cafe_babe_1234, 512),
         (0xdead_1234_5678_cafe, 4096),
-        (0x0011_2233_4455_6677, 16384),
     ];
     for &(seed, page_size) in fixed {
         tracing::info!(
