@@ -74,6 +74,11 @@ expect {
     t' or 1=1 -- |CREATE TABLE t' or 1=1 --  (a, b)
     1
 }
+expect @cli {
+    ok|CREATE TABLE ok (x)
+    t' OR 1=1 -- |CREATE TABLE "t' OR 1=1 -- " (a, b)
+    1
+}
 
 @cross-check-integrity
 test alter-table-add-column-typed {
@@ -246,6 +251,11 @@ test alter-table-drop-column-quoted-table-name-issue-5633 {
 expect {
     ok|CREATE TABLE ok (x)
     t' or 1=1 -- |CREATE TABLE t' or 1=1 --  (a)
+    1
+}
+expect @cli {
+    ok|CREATE TABLE ok (x)
+    t' OR 1=1 -- |CREATE TABLE "t' OR 1=1 -- " (a)
     1
 }
 
