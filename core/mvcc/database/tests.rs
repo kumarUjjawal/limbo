@@ -17,6 +17,7 @@ use quickcheck::{Arbitrary, Gen};
 use quickcheck_macros::quickcheck;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
+use std::collections::BTreeMap;
 
 pub(crate) struct MvccTestDbNoConn {
     pub(crate) db: Option<Arc<Database>>,
@@ -2938,6 +2939,7 @@ fn new_tx(tx_id: TxID, begin_ts: u64, state: TransactionState) -> Transaction {
         begin_ts,
         write_set: SkipSet::new(),
         read_set: SkipSet::new(),
+        fk_read_set: RwLock::new(BTreeMap::new()),
         header: RwLock::new(DatabaseHeader::default()),
         header_dirty: AtomicBool::new(false),
         savepoint_stack: RwLock::new(Vec::new()),
@@ -4304,6 +4306,7 @@ fn transaction_display() {
         begin_ts,
         write_set,
         read_set,
+        fk_read_set: RwLock::new(BTreeMap::new()),
         header: RwLock::new(DatabaseHeader::default()),
         header_dirty: AtomicBool::new(false),
         savepoint_stack: RwLock::new(Vec::new()),
@@ -4313,9 +4316,112 @@ fn transaction_display() {
         commit_dep_set: Mutex::new(HashSet::default()),
     };
 
-    let expected = "{ state: Preparing(20250915), id: 42, begin_ts: 20250914, write_set: [RowID { table_id: MVTableId(-2), row_id: Int(11) }, RowID { table_id: MVTableId(-2), row_id: Int(13) }], read_set: [RowID { table_id: MVTableId(-2), row_id: Int(17) }, RowID { table_id: MVTableId(-2), row_id: Int(19) }] }";
+    let expected = "{ state: Preparing(20250915), id: 42, begin_ts: 20250914, write_set: [RowID { table_id: MVTableId(-2), row_id: Int(11) }, RowID { table_id: MVTableId(-2), row_id: Int(13) }], read_set: [RowID { table_id: MVTableId(-2), row_id: Int(17) }, RowID { table_id: MVTableId(-2), row_id: Int(19) }], fk_read_set: [] }";
     let output = format!("{tx}");
     assert_eq!(output, expected);
+}
+
+#[test]
+fn test_savepoint_does_not_log_absent_fk_dependency_removal() {
+    let tx = new_tx(1, 1, TransactionState::Active);
+    let dependency = RowID::new((-2).into(), RowKey::Int(7));
+
+    tx.begin_savepoint();
+    tx.remove_from_fk_read_set(dependency);
+
+    let savepoint = tx
+        .pop_statement_savepoint()
+        .expect("savepoint should still be present");
+    assert!(savepoint.fk_read_set_changes.is_empty());
+    assert!(tx.fk_read_set.read().is_empty());
+}
+
+#[test]
+fn test_commit_point_dependency_tracks_preparing_parent_insert() {
+    let db = MvccTestDbNoConn::new_with_random_db();
+    let mvcc_store = db.get_mvcc_store();
+
+    mvcc_store
+        .txs
+        .insert(1, new_tx(1, 1, TransactionState::Preparing(5)));
+    let current_tx = new_tx(2, 2, TransactionState::Preparing(10));
+    let parent_version = make_rv(txid(1), None);
+
+    assert!(dependency_exists_at_commit_point(
+        &[parent_version],
+        10,
+        &current_tx,
+        &mvcc_store,
+    ));
+    assert_eq!(current_tx.commit_dep_counter.load(Ordering::Acquire), 1);
+    assert!(mvcc_store
+        .txs
+        .get(&1)
+        .unwrap()
+        .value()
+        .commit_dep_set
+        .lock()
+        .contains(&2));
+}
+
+#[test]
+fn test_commit_point_dependency_tracks_preparing_parent_delete() {
+    let db = MvccTestDbNoConn::new_with_random_db();
+    let mvcc_store = db.get_mvcc_store();
+
+    mvcc_store
+        .txs
+        .insert(1, new_tx(1, 1, TransactionState::Preparing(5)));
+    let current_tx = new_tx(2, 2, TransactionState::Preparing(10));
+    let parent_version = make_rv(ts(1), txid(1));
+
+    assert!(!dependency_exists_at_commit_point(
+        &[parent_version],
+        10,
+        &current_tx,
+        &mvcc_store,
+    ));
+    assert_eq!(current_tx.commit_dep_counter.load(Ordering::Acquire), 1);
+    assert!(mvcc_store
+        .txs
+        .get(&1)
+        .unwrap()
+        .value()
+        .commit_dep_set
+        .lock()
+        .contains(&2));
+}
+
+#[test]
+fn test_commit_point_dependency_missing_delete_tx_is_conservative() {
+    let db = MvccTestDbNoConn::new_with_random_db();
+    let mvcc_store = db.get_mvcc_store();
+    let current_tx = new_tx(2, 2, TransactionState::Preparing(10));
+    let parent_version = make_rv(ts(1), txid(99));
+
+    assert!(!dependency_exists_at_commit_point(
+        &[parent_version],
+        10,
+        &current_tx,
+        &mvcc_store,
+    ));
+    assert_eq!(current_tx.commit_dep_counter.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn test_commit_point_dependency_missing_begin_tx_is_conservative() {
+    let db = MvccTestDbNoConn::new_with_random_db();
+    let mvcc_store = db.get_mvcc_store();
+    let current_tx = new_tx(2, 2, TransactionState::Preparing(10));
+    let parent_version = make_rv(txid(99), None);
+
+    assert!(!dependency_exists_at_commit_point(
+        &[parent_version],
+        10,
+        &current_tx,
+        &mvcc_store,
+    ));
+    assert_eq!(current_tx.commit_dep_counter.load(Ordering::Acquire), 0);
 }
 
 /// What this test checks: Checkpoint transitions preserve DB/WAL/log ordering and watermark updates for the tested edge case.

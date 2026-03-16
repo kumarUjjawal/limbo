@@ -2167,6 +2167,39 @@ pub fn insn_to_row(
             0,
             String::new(),
         ),
+        Insn::FkRecordCurrentRead {
+            cursor_id,
+            prefix_cols,
+        } => (
+            "FkRecordCurrentRead",
+            *cursor_id as i64,
+            prefix_cols.unwrap_or_default() as i64,
+            0,
+            Value::build_text(""),
+            0,
+            String::new(),
+        ),
+        Insn::FkAdjustDependency {
+            cursor_id,
+            start_reg,
+            count,
+            uses_rowid,
+            remove,
+        } => (
+            "FkAdjustDependency",
+            *cursor_id as i64,
+            *start_reg as i64,
+            *count as i64,
+            Value::build_text(if *uses_rowid {
+                if *remove { "rowid-remove" } else { "rowid-add" }
+            } else if *remove {
+                "index-remove"
+            } else {
+                "index-add"
+            }),
+            0,
+            String::new(),
+        ),
         Insn::HashBuild { data } => {
             let payload_info = if let Some(p_reg) = data.payload_start_reg {
                 format!(" payload=r[{}]..r[{}]", p_reg, p_reg + data.num_payload - 1)

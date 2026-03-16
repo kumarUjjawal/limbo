@@ -7,7 +7,8 @@ use crate::numeric::Numeric;
 use crate::schema::{Schema, Table, SQLITE_SEQUENCE_TABLE_NAME};
 use crate::state_machine::StateMachine;
 use crate::storage::btree::{
-    integrity_check, CursorTrait, IntegrityCheckError, IntegrityCheckState, PageCategory,
+    integrity_check, CursorTrait, FkDependencyKey, IntegrityCheckError, IntegrityCheckState,
+    PageCategory,
 };
 use crate::storage::database::DatabaseFile;
 use crate::storage::journal_mode;
@@ -12148,6 +12149,68 @@ pub fn op_fk_check(
             "immediate foreign key constraint failed".to_string(),
         ));
     }
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
+pub fn op_fk_record_current_read(
+    _program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    _pager: &Arc<Pager>,
+) -> Result<InsnFunctionStepResult> {
+    load_insn!(
+        FkRecordCurrentRead {
+            cursor_id,
+            prefix_cols,
+        },
+        insn
+    );
+    let cursor = state.get_cursor(*cursor_id);
+    cursor.as_btree_mut().record_fk_read(*prefix_cols)?;
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
+pub fn op_fk_adjust_dependency(
+    _program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    _pager: &Arc<Pager>,
+) -> Result<InsnFunctionStepResult> {
+    load_insn!(
+        FkAdjustDependency {
+            cursor_id,
+            start_reg,
+            count,
+            uses_rowid,
+            remove,
+        },
+        insn
+    );
+    let key = if *uses_rowid {
+        let rowid = state.registers[*start_reg]
+            .get_value()
+            .as_int()
+            .ok_or_else(|| {
+                LimboError::InternalError(
+                    "FkAdjustDependency expected an integer rowid register".to_string(),
+                )
+            })?;
+        FkDependencyKey::Rowid(rowid)
+    } else {
+        FkDependencyKey::IndexKey {
+            record: ImmutableRecord::from_registers(
+                state.registers[*start_reg..*start_reg + *count].iter(),
+                *count,
+            ),
+            prefix_cols: *count,
+        }
+    };
+    let cursor = state.get_cursor(*cursor_id);
+    cursor
+        .as_btree_mut()
+        .adjust_fk_read_from_key(key, *remove)?;
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }

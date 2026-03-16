@@ -290,9 +290,6 @@ pub fn emit_fk_child_decrement_on_delete(
     for fk_ref in
         resolver.with_schema(database_id, |s| s.resolved_fks_for_child(child_table_name))?
     {
-        if !fk_ref.fk.deferred {
-            continue;
-        }
         // Fast path: if any FK column is NULL can't be a violation
         let null_skip = program.allocate_label();
         for cname in &fk_ref.child_cols {
@@ -342,26 +339,35 @@ pub fn emit_fk_child_decrement_on_delete(
                 extra_amount: 0,
             });
             program.emit_insn(Insn::MustBeInt { reg: tmpi });
-
-            // NotExists jumps when the parent key is missing, so we decrement there
-            let missing = program.allocate_label();
-            let done = program.allocate_label();
-
-            program.emit_insn(Insn::NotExists {
-                cursor: pcur,
-                rowid_reg: tmpi,
-                target_pc: missing,
+            program.emit_insn(Insn::FkAdjustDependency {
+                cursor_id: pcur,
+                start_reg: tmpi,
+                count: 1,
+                uses_rowid: true,
+                remove: true,
             });
 
-            // Parent FOUND, no decrement
-            program.emit_insn(Insn::Close { cursor_id: pcur });
-            program.emit_insn(Insn::Goto { target_pc: done });
+            if fk_ref.fk.deferred {
+                // NotExists jumps when the parent key is missing, so we decrement there.
+                let missing = program.allocate_label();
+                let done = program.allocate_label();
 
-            // Parent MISSING, decrement is guarded by FkIfZero to avoid underflow
-            program.preassign_label_to_next_insn(missing);
-            program.emit_insn(Insn::Close { cursor_id: pcur });
-            emit_guarded_fk_decrement(program, done, true);
-            program.preassign_label_to_next_insn(done);
+                program.emit_insn(Insn::NotExists {
+                    cursor: pcur,
+                    rowid_reg: tmpi,
+                    target_pc: missing,
+                });
+
+                program.emit_insn(Insn::Close { cursor_id: pcur });
+                program.emit_insn(Insn::Goto { target_pc: done });
+
+                program.preassign_label_to_next_insn(missing);
+                program.emit_insn(Insn::Close { cursor_id: pcur });
+                emit_guarded_fk_decrement(program, done, true);
+                program.preassign_label_to_next_insn(done);
+            } else {
+                program.emit_insn(Insn::Close { cursor_id: pcur });
+            }
         } else {
             // Probe parent unique index
             let parent_tbl = resolver
@@ -398,18 +404,29 @@ pub fn emit_fk_child_decrement_on_delete(
                 count: std::num::NonZeroUsize::new(n).unwrap(),
                 affinities: build_index_affinity_string(idx, &parent_tbl),
             });
-
-            let ok = program.allocate_label();
-            program.emit_insn(Insn::Found {
+            program.emit_insn(Insn::FkAdjustDependency {
                 cursor_id: icur,
-                target_pc: ok,
-                record_reg: probe,
-                num_regs: n,
+                start_reg: probe,
+                count: n,
+                uses_rowid: false,
+                remove: true,
             });
-            program.emit_insn(Insn::Close { cursor_id: icur });
-            emit_guarded_fk_decrement(program, ok, true);
-            program.preassign_label_to_next_insn(ok);
-            program.emit_insn(Insn::Close { cursor_id: icur });
+
+            if fk_ref.fk.deferred {
+                let ok = program.allocate_label();
+                program.emit_insn(Insn::Found {
+                    cursor_id: icur,
+                    target_pc: ok,
+                    record_reg: probe,
+                    num_regs: n,
+                });
+                program.emit_insn(Insn::Close { cursor_id: icur });
+                emit_guarded_fk_decrement(program, ok, true);
+                program.preassign_label_to_next_insn(ok);
+                program.emit_insn(Insn::Close { cursor_id: icur });
+            } else {
+                program.emit_insn(Insn::Close { cursor_id: icur });
+            }
         }
         program.preassign_label_to_next_insn(null_skip);
     }

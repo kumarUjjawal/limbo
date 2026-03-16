@@ -3589,6 +3589,10 @@ pub fn emit_fk_child_insert_checks(
                 rowid_reg: tmp,
                 target_pc: violation,
             });
+            program.emit_insn(Insn::FkRecordCurrentRead {
+                cursor_id: pcur,
+                prefix_cols: None,
+            });
             program.emit_insn(Insn::Close { cursor_id: pcur });
             program.emit_insn(Insn::Goto { target_pc: fk_ok });
 
@@ -3686,7 +3690,13 @@ pub fn emit_fk_child_insert_checks(
                 probe,
                 ncols,
                 // on_found: parent exists, FK satisfied
-                |_p| Ok(()),
+                |p| {
+                    p.emit_insn(Insn::FkRecordCurrentRead {
+                        cursor_id: icur,
+                        prefix_cols: Some(ncols),
+                    });
+                    Ok(())
+                },
                 // on_not_found: immediate → Halt; deferred → counter
                 |p| {
                     if fk_ref.fk.deferred {

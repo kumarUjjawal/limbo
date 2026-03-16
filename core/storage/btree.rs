@@ -617,6 +617,20 @@ pub trait CursorTrait: Any + Send + Sync {
         false
     }
 
+    /// Record that the current row satisfied a foreign-key parent existence
+    /// probe. `prefix_cols` is only used for index cursors and identifies how
+    /// many indexed columns form the referenced parent key.
+    fn record_fk_read(&mut self, _prefix_cols: Option<usize>) -> Result<()> {
+        Ok(())
+    }
+
+    /// Adjust a foreign-key dependency using a materialized parent key. MVCC
+    /// cursors use this to keep commit-time FK dependencies in sync when child
+    /// rows are repaired or deleted inside the same transaction.
+    fn adjust_fk_read_from_key(&mut self, _key: FkDependencyKey, _remove: bool) -> Result<()> {
+        Ok(())
+    }
+
     // --- start: BTreeCursor specific functions ----
     fn invalidate_record(&mut self);
     fn has_rowid(&self) -> bool;
@@ -627,6 +641,14 @@ pub trait CursorTrait: Any + Send + Sync {
     /// modified by another cursor (e.g. clear_btree via ResetSorter).
     fn invalidate_btree_cache(&mut self) {}
     // --- end: BTreeCursor specific functions ----
+}
+
+pub enum FkDependencyKey {
+    Rowid(i64),
+    IndexKey {
+        record: ImmutableRecord,
+        prefix_cols: usize,
+    },
 }
 
 pub struct BTreeCursor {

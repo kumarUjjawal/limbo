@@ -1508,6 +1508,23 @@ pub enum Insn {
     FkCheck {
         deferred: bool,
     },
+    /// Record that the current row satisfied a foreign-key parent existence
+    /// probe. For index cursors, `prefix_cols` is the number of referenced
+    /// parent-key columns and excludes the hidden rowid suffix.
+    FkRecordCurrentRead {
+        cursor_id: CursorID,
+        prefix_cols: Option<usize>,
+    },
+    /// Adjust a tracked foreign-key dependency using a parent key
+    /// materialized in registers. The cursor identifies the referenced parent
+    /// table or unique index metadata.
+    FkAdjustDependency {
+        cursor_id: CursorID,
+        start_reg: usize,
+        count: usize,
+        uses_rowid: bool,
+        remove: bool,
+    },
 
     /// Build a hash table from a cursor for hash join.
     HashBuild {
@@ -1813,6 +1830,8 @@ impl InsnVariants {
             InsnVariants::FkCounter => execute::op_fk_counter,
             InsnVariants::FkIfZero => execute::op_fk_if_zero,
             InsnVariants::FkCheck => execute::op_fk_check,
+            InsnVariants::FkRecordCurrentRead => execute::op_fk_record_current_read,
+            InsnVariants::FkAdjustDependency => execute::op_fk_adjust_dependency,
             InsnVariants::VBegin => execute::op_vbegin,
             InsnVariants::VRename => execute::op_vrename,
             InsnVariants::FilterAdd => execute::op_filter_add,

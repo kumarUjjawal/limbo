@@ -38,7 +38,7 @@ use crossbeam_skiplist::map::Entry;
 use crossbeam_skiplist::{SkipMap, SkipSet};
 use rustc_hash::FxHashMap as HashMap;
 use rustc_hash::FxHashSet as HashSet;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::ops::Bound;
@@ -373,6 +373,21 @@ enum SavepointKind {
     },
 }
 
+#[derive(Clone, Copy, Debug)]
+enum FkReadSetChange {
+    Add,
+    Remove,
+}
+
+impl FkReadSetChange {
+    fn inverse(self) -> Self {
+        match self {
+            Self::Add => Self::Remove,
+            Self::Remove => Self::Add,
+        }
+    }
+}
+
 /// Tracks row/index version deltas created inside a single savepoint scope.
 #[derive(Debug, Default)]
 pub struct Savepoint {
@@ -389,6 +404,9 @@ pub struct Savepoint {
     /// RowIDs that were NEWLY added to write_set by this savepoint.
     /// On rollback: only these should be removed from write_set.
     newly_added_to_write_set: Vec<RowID>,
+    /// FK dependency additions/removals performed in this savepoint.
+    /// On rollback: replay the inverse changes in reverse order.
+    fk_read_set_changes: Vec<(RowID, FkReadSetChange)>,
 }
 
 impl Savepoint {
@@ -423,6 +441,8 @@ impl Savepoint {
             .append(&mut other.deleted_index_versions);
         self.newly_added_to_write_set
             .append(&mut other.newly_added_to_write_set);
+        self.fk_read_set_changes
+            .append(&mut other.fk_read_set_changes);
     }
 }
 
@@ -446,6 +466,8 @@ pub struct Transaction {
     write_set: SkipSet<RowID>,
     /// The transaction read set.
     read_set: SkipSet<RowID>,
+    /// FK parent dependencies that must still exist when this transaction commits.
+    fk_read_set: RwLock<BTreeMap<RowID, usize>>,
     /// The transaction header.
     header: RwLock<DatabaseHeader>,
     /// True when the transaction mutated its local database header snapshot.
@@ -477,6 +499,7 @@ impl Transaction {
             begin_ts,
             write_set: SkipSet::new(),
             read_set: SkipSet::new(),
+            fk_read_set: RwLock::new(BTreeMap::new()),
             header: RwLock::new(header),
             header_dirty: AtomicBool::new(false),
             savepoint_stack: RwLock::new(Vec::new()),
@@ -489,6 +512,44 @@ impl Transaction {
 
     fn insert_to_read_set(&self, id: RowID) {
         self.read_set.insert(id);
+    }
+
+    fn insert_to_fk_read_set(&self, id: RowID) {
+        self.adjust_fk_read_set(id, FkReadSetChange::Add);
+    }
+
+    fn remove_from_fk_read_set(&self, id: RowID) {
+        self.adjust_fk_read_set(id, FkReadSetChange::Remove);
+    }
+
+    fn adjust_fk_read_set(&self, id: RowID, change: FkReadSetChange) {
+        if self.apply_fk_read_set_change(&id, change) {
+            if let Some(savepoint) = self.savepoint_stack.write().last_mut() {
+                savepoint.fk_read_set_changes.push((id, change));
+            }
+        }
+    }
+
+    fn apply_fk_read_set_change(&self, id: &RowID, change: FkReadSetChange) -> bool {
+        let mut fk_read_set = self.fk_read_set.write();
+        match change {
+            FkReadSetChange::Add => {
+                *fk_read_set.entry(id.clone()).or_insert(0) += 1;
+                true
+            }
+            FkReadSetChange::Remove => match fk_read_set.entry(id.clone()) {
+                std::collections::btree_map::Entry::Occupied(mut entry) => {
+                    let count = entry.get_mut();
+                    if *count == 1 {
+                        entry.remove();
+                    } else {
+                        *count -= 1;
+                    }
+                    true
+                }
+                std::collections::btree_map::Entry::Vacant(_) => false,
+            },
+        }
     }
 
     fn insert_to_write_set(&self, id: RowID) {
@@ -730,6 +791,14 @@ impl std::fmt::Display for Transaction {
                 write!(f, ", ")?;
             }
             write!(f, "{:?}", *v.value())?;
+        }
+
+        write!(f, "], fk_read_set: [")?;
+        for (i, (rowid, count)) in self.fk_read_set.read().iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "({rowid:?}, {count})")?;
         }
 
         write!(f, "] }}")
@@ -1179,6 +1248,108 @@ impl<Clock: LogicalClock> CommitStateMachine<Clock> {
         }
         Ok(())
     }
+
+    fn validate_fk_dependencies(
+        &self,
+        end_ts: u64,
+        tx: &Transaction,
+        mvcc_store: &Arc<MvStore<Clock>>,
+    ) -> Result<()> {
+        let dependencies: Vec<RowID> = tx.fk_read_set.read().keys().cloned().collect();
+        for dependency in dependencies {
+            if !self.fk_dependency_exists_at_commit(&dependency, end_ts, tx, mvcc_store)? {
+                return Err(LimboError::ForeignKeyConstraint(
+                    "foreign key constraint failed".to_string(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn fk_dependency_exists_at_commit(
+        &self,
+        dependency: &RowID,
+        end_ts: u64,
+        tx: &Transaction,
+        mvcc_store: &Arc<MvStore<Clock>>,
+    ) -> Result<bool> {
+        match &dependency.row_id {
+            RowKey::Int(_) => {
+                Ok(self.table_dependency_exists_at_commit(dependency, end_ts, tx, mvcc_store))
+            }
+            RowKey::Record(prefix_key) => Ok(self.index_dependency_exists_at_commit(
+                dependency.table_id,
+                prefix_key,
+                end_ts,
+                tx,
+                mvcc_store,
+            )?),
+        }
+    }
+
+    fn table_dependency_exists_at_commit(
+        &self,
+        dependency: &RowID,
+        end_ts: u64,
+        tx: &Transaction,
+        mvcc_store: &Arc<MvStore<Clock>>,
+    ) -> bool {
+        let Some(row_versions) = mvcc_store.rows.get(dependency) else {
+            return true;
+        };
+        let row_versions = row_versions.value().read();
+        dependency_exists_at_commit_point(row_versions.as_slice(), end_ts, tx, mvcc_store)
+    }
+
+    fn index_dependency_exists_at_commit(
+        &self,
+        table_id: MVTableId,
+        prefix_key: &SortableIndexKey,
+        end_ts: u64,
+        tx: &Transaction,
+        mvcc_store: &Arc<MvStore<Clock>>,
+    ) -> Result<bool> {
+        let Some(index_rows) = mvcc_store.index_rows.get(&table_id) else {
+            return Ok(true);
+        };
+        let index_rows = index_rows.value();
+        let mut matched = false;
+        let mut saw_live_version = false;
+        let mut saw_btree_invalidation = false;
+        for entry in index_rows.range::<SortableIndexKey, _>(prefix_key..) {
+            let other_key = entry.key();
+            if !prefix_key.matches_prefix(other_key, prefix_key.metadata.num_cols)? {
+                break;
+            }
+            matched = true;
+            let row_versions = entry.value().read();
+            if dependency_has_live_version_at_commit_point(
+                row_versions.as_slice(),
+                end_ts,
+                tx,
+                mvcc_store,
+            ) {
+                saw_live_version = true;
+                break;
+            }
+            if dependency_btree_invalidated_at_commit_point(
+                row_versions.as_slice(),
+                end_ts,
+                tx,
+                mvcc_store,
+            ) {
+                saw_btree_invalidation = true;
+            }
+        }
+
+        if saw_live_version {
+            return Ok(true);
+        }
+        if !matched {
+            return Ok(true);
+        }
+        Ok(!saw_btree_invalidation)
+    }
 }
 
 impl WriteRowStateMachine {
@@ -1396,6 +1567,7 @@ impl<Clock: LogicalClock> StateTransition for CommitStateMachine<Clock> {
                         self.check_index_for_conflicts(id, *end_ts, tx, mvcc_store)?;
                     }
                 }
+                self.validate_fk_dependencies(*end_ts, tx, mvcc_store)?;
 
                 // Validation passed. Wait for commit dependencies before postprocessing.
                 // Hekaton Section 3.2: validation → wait for deps → logging.
@@ -3498,6 +3670,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
             deleted_table_versions,
             deleted_index_versions,
             newly_added_to_write_set,
+            fk_read_set_changes,
             ..
         } = savepoint;
 
@@ -3580,6 +3753,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
 
         touched_rowids.extend(newly_added_to_write_set);
         self.remove_rolled_back_rows_from_write_set(tx_id, touched_rowids.clone());
+        self.rollback_fk_read_set_changes(tx_id, fk_read_set_changes);
     }
 
     fn row_has_uncommitted_version_for_tx(&self, rowid: &RowID, tx_id: TxID) -> bool {
@@ -3624,6 +3798,44 @@ impl<Clock: LogicalClock> MvStore<Clock> {
             }
             tx.write_set.remove(&rowid);
         }
+    }
+
+    fn rollback_fk_read_set_changes(&self, tx_id: TxID, changes: Vec<(RowID, FkReadSetChange)>) {
+        if changes.is_empty() {
+            return;
+        }
+        let Some(tx) = self.txs.get(&tx_id) else {
+            return;
+        };
+        let tx = tx.value();
+        for (rowid, change) in changes.into_iter().rev() {
+            tx.apply_fk_read_set_change(&rowid, change.inverse());
+        }
+    }
+
+    pub fn record_fk_read_dependency(&self, tx_id: TxID, rowid: RowID) -> Result<()> {
+        self.adjust_fk_read_dependency(tx_id, rowid, FkReadSetChange::Add)
+    }
+
+    pub fn remove_fk_read_dependency(&self, tx_id: TxID, rowid: RowID) -> Result<()> {
+        self.adjust_fk_read_dependency(tx_id, rowid, FkReadSetChange::Remove)
+    }
+
+    fn adjust_fk_read_dependency(
+        &self,
+        tx_id: TxID,
+        rowid: RowID,
+        change: FkReadSetChange,
+    ) -> Result<()> {
+        let tx = self
+            .txs
+            .get(&tx_id)
+            .ok_or_else(|| LimboError::NoSuchTransactionID(tx_id.to_string()))?;
+        match change {
+            FkReadSetChange::Add => tx.value().insert_to_fk_read_set(rowid),
+            FkReadSetChange::Remove => tx.value().remove_from_fk_read_set(rowid),
+        }
+        Ok(())
     }
 
     /// Returns true if the given transaction is the exclusive transaction.
@@ -5022,6 +5234,165 @@ fn lookup_finalized_tx_state(
         );
         state
     })
+}
+
+fn tx_effect_happens_before_commit_point<Clock: LogicalClock>(
+    tx_state: TransactionState,
+    end_ts: u64,
+    current_tx: &Transaction,
+    effect_tx_id: TxID,
+    mvcc_store: &Arc<MvStore<Clock>>,
+) -> bool {
+    if effect_tx_id == current_tx.tx_id {
+        return true;
+    }
+    match tx_state {
+        TransactionState::Committed(committed_ts) => committed_ts < end_ts,
+        TransactionState::Preparing(committed_ts) => {
+            if committed_ts < end_ts {
+                register_commit_dependency(&mvcc_store.txs, current_tx, effect_tx_id);
+                true
+            } else {
+                false
+            }
+        }
+        TransactionState::Active | TransactionState::Aborted | TransactionState::Terminated => {
+            false
+        }
+    }
+}
+
+fn dependency_has_live_version_at_commit_point<Clock: LogicalClock>(
+    row_versions: &[RowVersion],
+    end_ts: u64,
+    current_tx: &Transaction,
+    mvcc_store: &Arc<MvStore<Clock>>,
+) -> bool {
+    row_versions
+        .iter()
+        .any(|version| version_is_live_at_commit_point(version, end_ts, current_tx, mvcc_store))
+}
+
+fn dependency_btree_invalidated_at_commit_point<Clock: LogicalClock>(
+    row_versions: &[RowVersion],
+    end_ts: u64,
+    current_tx: &Transaction,
+    mvcc_store: &Arc<MvStore<Clock>>,
+) -> bool {
+    row_versions.iter().any(|version| {
+        version_invalidates_btree_at_commit_point(version, end_ts, current_tx, mvcc_store)
+    })
+}
+
+fn dependency_exists_at_commit_point<Clock: LogicalClock>(
+    row_versions: &[RowVersion],
+    end_ts: u64,
+    current_tx: &Transaction,
+    mvcc_store: &Arc<MvStore<Clock>>,
+) -> bool {
+    if dependency_has_live_version_at_commit_point(row_versions, end_ts, current_tx, mvcc_store) {
+        return true;
+    }
+    !dependency_btree_invalidated_at_commit_point(row_versions, end_ts, current_tx, mvcc_store)
+}
+
+fn version_is_live_at_commit_point<Clock: LogicalClock>(
+    version: &RowVersion,
+    end_ts: u64,
+    current_tx: &Transaction,
+    mvcc_store: &Arc<MvStore<Clock>>,
+) -> bool {
+    let begin_visible = match version.begin {
+        Some(TxTimestampOrID::Timestamp(begin_ts)) => begin_ts < end_ts,
+        Some(TxTimestampOrID::TxID(effect_tx_id)) => match lookup_tx_state(
+            &mvcc_store.txs,
+            &mvcc_store.finalized_tx_states,
+            effect_tx_id,
+        ) {
+            Some(state) => tx_effect_happens_before_commit_point(
+                state,
+                end_ts,
+                current_tx,
+                effect_tx_id,
+                mvcc_store,
+            ),
+            None => false,
+        },
+        None => false,
+    };
+    if !begin_visible {
+        return false;
+    }
+
+    match version.end {
+        None => true,
+        Some(TxTimestampOrID::Timestamp(delete_ts)) => delete_ts > end_ts,
+        Some(TxTimestampOrID::TxID(effect_tx_id)) => {
+            if effect_tx_id == current_tx.tx_id {
+                return false;
+            }
+            match lookup_tx_state(
+                &mvcc_store.txs,
+                &mvcc_store.finalized_tx_states,
+                effect_tx_id,
+            ) {
+                Some(state) => !tx_effect_happens_before_commit_point(
+                    state,
+                    end_ts,
+                    current_tx,
+                    effect_tx_id,
+                    mvcc_store,
+                ),
+                None => false,
+            }
+        }
+    }
+}
+
+fn version_invalidates_btree_at_commit_point<Clock: LogicalClock>(
+    version: &RowVersion,
+    end_ts: u64,
+    current_tx: &Transaction,
+    mvcc_store: &Arc<MvStore<Clock>>,
+) -> bool {
+    if version_is_live_at_commit_point(version, end_ts, current_tx, mvcc_store) {
+        return true;
+    }
+    if let Some(TxTimestampOrID::TxID(effect_tx_id)) = version.begin {
+        if effect_tx_id != current_tx.tx_id
+            && lookup_tx_state(
+                &mvcc_store.txs,
+                &mvcc_store.finalized_tx_states,
+                effect_tx_id,
+            )
+            .is_none()
+        {
+            return true;
+        }
+    }
+    match version.end {
+        Some(TxTimestampOrID::Timestamp(delete_ts)) => delete_ts < end_ts,
+        Some(TxTimestampOrID::TxID(effect_tx_id)) => {
+            if effect_tx_id == current_tx.tx_id {
+                return true;
+            }
+            match lookup_tx_state(
+                &mvcc_store.txs,
+                &mvcc_store.finalized_tx_states,
+                effect_tx_id,
+            ) {
+                Some(state) => tx_effect_happens_before_commit_point(
+                    state,
+                    end_ts,
+                    current_tx,
+                    effect_tx_id,
+                    mvcc_store,
+                ),
+                None => true,
+            }
+        }
+        None => false,
+    }
 }
 
 fn is_begin_visible(

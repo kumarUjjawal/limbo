@@ -7,7 +7,7 @@ use crate::mvcc::clock::LogicalClock;
 use crate::mvcc::database::{
     create_seek_range, MVTableId, MvStore, Row, RowID, RowKey, RowVersion, SortableIndexKey,
 };
-use crate::storage::btree::{BTreeCursor, BTreeKey, CursorTrait};
+use crate::storage::btree::{BTreeCursor, BTreeKey, CursorTrait, FkDependencyKey};
 use crate::sync::Arc;
 use crate::translate::plan::IterationDirection;
 use crate::types::{
@@ -372,6 +372,74 @@ impl<Clock: LogicalClock + 'static> MvccLazyCursor<Clock> {
         };
         self.db
             .read_from_table_or_index(self.tx_id, row_id, maybe_index_id)
+    }
+
+    fn record_fk_read_dependency(&self, prefix_cols: Option<usize>) -> Result<()> {
+        let row_id = match &self.current_pos {
+            CursorPosition::Loaded { row_id, .. } => row_id.clone(),
+            _ => {
+                return Err(LimboError::InternalError(
+                    "FK read dependency requested without a current MVCC cursor row".to_string(),
+                ))
+            }
+        };
+
+        let dependency = match (&self.mv_cursor_type, &row_id.row_id, prefix_cols) {
+            (MvccCursorType::Index(_), RowKey::Record(record), Some(prefix_cols)) => {
+                let mut metadata = record.metadata.as_ref().clone();
+                metadata.num_cols = prefix_cols;
+                RowID::new(
+                    row_id.table_id,
+                    RowKey::Record(SortableIndexKey {
+                        key: record.key.clone(),
+                        metadata: Arc::new(metadata),
+                    }),
+                )
+            }
+            (MvccCursorType::Index(_), RowKey::Record(_), None) => {
+                return Err(LimboError::InternalError(
+                    "FK index dependency is missing the prefix column count".to_string(),
+                ))
+            }
+            _ => row_id,
+        };
+
+        self.db.record_fk_read_dependency(self.tx_id, dependency)
+    }
+
+    fn fk_dependency_from_key(&self, key: FkDependencyKey) -> Result<RowID> {
+        match (&self.mv_cursor_type, key) {
+            (MvccCursorType::Table, FkDependencyKey::Rowid(rowid)) => {
+                Ok(RowID::new(self.table_id, RowKey::Int(rowid)))
+            }
+            (
+                MvccCursorType::Index(index_info),
+                FkDependencyKey::IndexKey {
+                    record,
+                    prefix_cols,
+                },
+            ) => {
+                let mut metadata = index_info.as_ref().clone();
+                metadata.num_cols = prefix_cols;
+                Ok(RowID::new(
+                    self.table_id,
+                    RowKey::Record(SortableIndexKey {
+                        key: record,
+                        metadata: Arc::new(metadata),
+                    }),
+                ))
+            }
+            (MvccCursorType::Table, FkDependencyKey::IndexKey { .. }) => {
+                Err(LimboError::InternalError(
+                    "FK index dependency was routed to a table cursor".to_string(),
+                ))
+            }
+            (MvccCursorType::Index(_), FkDependencyKey::Rowid(_)) => {
+                Err(LimboError::InternalError(
+                    "FK rowid dependency was routed to an index cursor".to_string(),
+                ))
+            }
+        }
     }
 
     pub fn close(self) -> Result<()> {
@@ -1667,6 +1735,19 @@ impl<Clock: LogicalClock + 'static> CursorTrait for MvccLazyCursor<Clock> {
     /// Returns true if this cursor operates in MVCC mode.
     fn is_mvcc(&self) -> bool {
         true
+    }
+
+    fn record_fk_read(&mut self, prefix_cols: Option<usize>) -> Result<()> {
+        self.record_fk_read_dependency(prefix_cols)
+    }
+
+    fn adjust_fk_read_from_key(&mut self, key: FkDependencyKey, remove: bool) -> Result<()> {
+        let dependency = self.fk_dependency_from_key(key)?;
+        if remove {
+            self.db.remove_fk_read_dependency(self.tx_id, dependency)
+        } else {
+            self.db.record_fk_read_dependency(self.tx_id, dependency)
+        }
     }
 }
 

@@ -337,6 +337,372 @@ fn test_stmt_rollback_cleans_write_set_with_index(tmp_db: TempDatabase) -> anyho
     Ok(())
 }
 
+/// A child row inserted under BEGIN CONCURRENT must not commit if a concurrent
+/// transaction deleted the referenced parent row before this transaction
+/// commits.
+#[turso_macros::test]
+fn test_fk_child_insert_commit_fails_after_concurrent_parent_delete(
+    tmp_db: TempDatabase,
+) -> anyhow::Result<()> {
+    let conn0 = tmp_db.connect_limbo();
+    conn0.pragma_update("journal_mode", "'mvcc'")?;
+    conn0.execute("PRAGMA foreign_keys = ON")?;
+    conn0.execute("CREATE TABLE parent(id INTEGER PRIMARY KEY)")?;
+    conn0.execute(
+        "CREATE TABLE child(id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent(id))",
+    )?;
+    conn0.execute("INSERT INTO parent VALUES (1)")?;
+    conn0.execute("INSERT INTO parent VALUES (2)")?;
+
+    let conn1 = tmp_db.connect_limbo();
+    let conn2 = tmp_db.connect_limbo();
+    conn1.execute("PRAGMA foreign_keys = ON")?;
+    conn2.execute("PRAGMA foreign_keys = ON")?;
+
+    conn1.execute("BEGIN CONCURRENT")?;
+    conn2.execute("BEGIN CONCURRENT")?;
+    conn1.execute("DELETE FROM parent WHERE id = 2")?;
+    conn2.execute("INSERT INTO child VALUES (1, 2)")?;
+
+    conn1.execute("COMMIT")?;
+    let err = conn2
+        .execute("COMMIT")
+        .expect_err("child insert commit must fail after concurrent parent delete");
+    assert!(
+        matches!(err, turso_core::LimboError::ForeignKeyConstraint(_)),
+        "expected foreign-key failure, got {err:?}"
+    );
+
+    let parents: Vec<(i64,)> = conn0.exec_rows("SELECT id FROM parent ORDER BY id");
+    assert_eq!(parents, vec![(1,)]);
+    let children: Vec<(i64, i64)> =
+        conn0.exec_rows("SELECT id, parent_id FROM child ORDER BY id, parent_id");
+    assert!(
+        children.is_empty(),
+        "child insert must not persist: {children:?}"
+    );
+
+    Ok(())
+}
+
+/// When the referenced parent key is preserved by deleting one parent row and
+/// inserting another row with the same UNIQUE key, the child commit must still
+/// succeed. This guards against tracking the exact index row instead of the
+/// referenced parent key.
+#[turso_macros::test]
+fn test_fk_child_insert_survives_concurrent_parent_key_replacement(
+    tmp_db: TempDatabase,
+) -> anyhow::Result<()> {
+    let conn0 = tmp_db.connect_limbo();
+    conn0.pragma_update("journal_mode", "'mvcc'")?;
+    conn0.execute("PRAGMA foreign_keys = ON")?;
+    conn0.execute("CREATE TABLE parent(id INTEGER PRIMARY KEY, k INTEGER UNIQUE)")?;
+    conn0.execute(
+        "CREATE TABLE child(id INTEGER PRIMARY KEY, parent_k INTEGER REFERENCES parent(k))",
+    )?;
+    conn0.execute("INSERT INTO parent VALUES (1, 7)")?;
+
+    let conn1 = tmp_db.connect_limbo();
+    let conn2 = tmp_db.connect_limbo();
+    conn1.execute("PRAGMA foreign_keys = ON")?;
+    conn2.execute("PRAGMA foreign_keys = ON")?;
+
+    conn1.execute("BEGIN CONCURRENT")?;
+    conn2.execute("BEGIN CONCURRENT")?;
+    conn1.execute("DELETE FROM parent WHERE id = 1")?;
+    conn1.execute("INSERT INTO parent VALUES (2, 7)")?;
+    conn2.execute("INSERT INTO child VALUES (1, 7)")?;
+
+    conn1.execute("COMMIT")?;
+    conn2.execute("COMMIT")?;
+
+    let parents: Vec<(i64, i64)> = conn0.exec_rows("SELECT id, k FROM parent ORDER BY id");
+    assert_eq!(parents, vec![(2, 7)]);
+    let children: Vec<(i64, i64)> =
+        conn0.exec_rows("SELECT id, parent_k FROM child ORDER BY id, parent_k");
+    assert_eq!(children, vec![(1, 7)]);
+
+    Ok(())
+}
+
+/// Rolling back a savepoint that inserted a child row must also discard the FK
+/// parent dependency recorded for that rolled-back row.
+#[turso_macros::test]
+fn test_fk_dependency_rollback_does_not_poison_later_commit(
+    tmp_db: TempDatabase,
+) -> anyhow::Result<()> {
+    let conn0 = tmp_db.connect_limbo();
+    conn0.pragma_update("journal_mode", "'mvcc'")?;
+    conn0.execute("PRAGMA foreign_keys = ON")?;
+    conn0.execute("CREATE TABLE parent(id INTEGER PRIMARY KEY)")?;
+    conn0.execute(
+        "CREATE TABLE child(id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent(id))",
+    )?;
+    conn0.execute("INSERT INTO parent VALUES (1)")?;
+
+    let conn1 = tmp_db.connect_limbo();
+    let conn2 = tmp_db.connect_limbo();
+    conn1.execute("PRAGMA foreign_keys = ON")?;
+    conn2.execute("PRAGMA foreign_keys = ON")?;
+
+    conn1.execute("BEGIN CONCURRENT")?;
+    conn2.execute("BEGIN CONCURRENT")?;
+
+    conn2.execute("SAVEPOINT sp1")?;
+    conn2.execute("INSERT INTO child VALUES (1, 1)")?;
+    conn2.execute("ROLLBACK TO sp1")?;
+    conn2.execute("RELEASE sp1")?;
+
+    conn1.execute("DELETE FROM parent WHERE id = 1")?;
+    conn1.execute("COMMIT")?;
+    conn2.execute("COMMIT")?;
+
+    let parents: Vec<(i64,)> = conn0.exec_rows("SELECT id FROM parent ORDER BY id");
+    assert!(
+        parents.is_empty(),
+        "parent delete should persist: {parents:?}"
+    );
+    let children: Vec<(i64, i64)> =
+        conn0.exec_rows("SELECT id, parent_id FROM child ORDER BY id, parent_id");
+    assert!(
+        children.is_empty(),
+        "rolled-back child insert must stay rolled back: {children:?}"
+    );
+
+    Ok(())
+}
+
+/// A child row that is inserted and then deleted in the same concurrent
+/// transaction must not keep a stale parent dependency alive at commit.
+#[turso_macros::test]
+fn test_fk_dependency_repaired_by_delete_allows_commit(tmp_db: TempDatabase) -> anyhow::Result<()> {
+    let conn0 = tmp_db.connect_limbo();
+    conn0.pragma_update("journal_mode", "'mvcc'")?;
+    conn0.execute("PRAGMA foreign_keys = ON")?;
+    conn0.execute("CREATE TABLE parent(id INTEGER PRIMARY KEY)")?;
+    conn0.execute(
+        "CREATE TABLE child(id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent(id))",
+    )?;
+    conn0.execute("INSERT INTO parent VALUES (1)")?;
+
+    let conn1 = tmp_db.connect_limbo();
+    let conn2 = tmp_db.connect_limbo();
+    conn1.execute("PRAGMA foreign_keys = ON")?;
+    conn2.execute("PRAGMA foreign_keys = ON")?;
+
+    conn1.execute("BEGIN CONCURRENT")?;
+    conn2.execute("BEGIN CONCURRENT")?;
+
+    conn2.execute("INSERT INTO child VALUES (1, 1)")?;
+    conn2.execute("DELETE FROM child WHERE id = 1")?;
+
+    conn1.execute("DELETE FROM parent WHERE id = 1")?;
+    conn1.execute("COMMIT")?;
+    conn2.execute("COMMIT")?;
+
+    let parents: Vec<(i64,)> = conn0.exec_rows("SELECT id FROM parent ORDER BY id");
+    assert!(
+        parents.is_empty(),
+        "parent delete should persist: {parents:?}"
+    );
+    let children: Vec<(i64, i64)> =
+        conn0.exec_rows("SELECT id, parent_id FROM child ORDER BY id, parent_id");
+    assert!(
+        children.is_empty(),
+        "deleted child must not persist: {children:?}"
+    );
+
+    Ok(())
+}
+
+/// Same repair-by-delete case, but through a referenced UNIQUE parent key so
+/// the index-prefix delete-adjustment path is exercised directly.
+#[turso_macros::test]
+fn test_fk_dependency_unique_key_delete_repair_allows_commit(
+    tmp_db: TempDatabase,
+) -> anyhow::Result<()> {
+    let conn0 = tmp_db.connect_limbo();
+    conn0.pragma_update("journal_mode", "'mvcc'")?;
+    conn0.execute("PRAGMA foreign_keys = ON")?;
+    conn0.execute("CREATE TABLE parent(id INTEGER PRIMARY KEY, k INTEGER UNIQUE)")?;
+    conn0.execute(
+        "CREATE TABLE child(id INTEGER PRIMARY KEY, parent_k INTEGER REFERENCES parent(k))",
+    )?;
+    conn0.execute("INSERT INTO parent VALUES (1, 7)")?;
+
+    let conn1 = tmp_db.connect_limbo();
+    let conn2 = tmp_db.connect_limbo();
+    conn1.execute("PRAGMA foreign_keys = ON")?;
+    conn2.execute("PRAGMA foreign_keys = ON")?;
+
+    conn1.execute("BEGIN CONCURRENT")?;
+    conn2.execute("BEGIN CONCURRENT")?;
+
+    conn2.execute("INSERT INTO child VALUES (1, 7)")?;
+    conn2.execute("DELETE FROM child WHERE id = 1")?;
+
+    conn1.execute("DELETE FROM parent WHERE id = 1")?;
+    conn1.execute("COMMIT")?;
+    conn2.execute("COMMIT")?;
+
+    let parents: Vec<(i64, i64)> = conn0.exec_rows("SELECT id, k FROM parent ORDER BY id");
+    assert!(
+        parents.is_empty(),
+        "parent delete should persist: {parents:?}"
+    );
+    let children: Vec<(i64, i64)> =
+        conn0.exec_rows("SELECT id, parent_k FROM child ORDER BY id, parent_k");
+    assert!(
+        children.is_empty(),
+        "deleted child must not persist: {children:?}"
+    );
+
+    Ok(())
+}
+
+/// Multiple child references to the same parent key must be reference-counted.
+/// Removing one child row must not clear the dependency for another child row
+/// that still survives to commit.
+#[turso_macros::test]
+fn test_fk_dependency_counts_duplicate_children(tmp_db: TempDatabase) -> anyhow::Result<()> {
+    let conn0 = tmp_db.connect_limbo();
+    conn0.pragma_update("journal_mode", "'mvcc'")?;
+    conn0.execute("PRAGMA foreign_keys = ON")?;
+    conn0.execute("CREATE TABLE parent(id INTEGER PRIMARY KEY)")?;
+    conn0.execute(
+        "CREATE TABLE child(id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent(id))",
+    )?;
+    conn0.execute("INSERT INTO parent VALUES (1)")?;
+
+    let conn1 = tmp_db.connect_limbo();
+    let conn2 = tmp_db.connect_limbo();
+    conn1.execute("PRAGMA foreign_keys = ON")?;
+    conn2.execute("PRAGMA foreign_keys = ON")?;
+
+    conn1.execute("BEGIN CONCURRENT")?;
+    conn2.execute("BEGIN CONCURRENT")?;
+
+    conn2.execute("INSERT INTO child VALUES (1, 1)")?;
+    conn2.execute("INSERT INTO child VALUES (2, 1)")?;
+    conn2.execute("DELETE FROM child WHERE id = 1")?;
+
+    conn1.execute("DELETE FROM parent WHERE id = 1")?;
+    conn1.execute("COMMIT")?;
+
+    let err = conn2
+        .execute("COMMIT")
+        .expect_err("remaining child reference must still fail commit");
+    assert!(
+        matches!(err, turso_core::LimboError::ForeignKeyConstraint(_)),
+        "expected foreign-key failure, got {err:?}"
+    );
+
+    let parents: Vec<(i64,)> = conn0.exec_rows("SELECT id FROM parent ORDER BY id");
+    assert!(
+        parents.is_empty(),
+        "parent delete should persist: {parents:?}"
+    );
+    let children: Vec<(i64, i64)> =
+        conn0.exec_rows("SELECT id, parent_id FROM child ORDER BY id, parent_id");
+    assert!(
+        children.is_empty(),
+        "aborted child transaction must not persist rows: {children:?}"
+    );
+
+    Ok(())
+}
+
+/// Updating a child FK to a different valid rowid parent must register the new
+/// dependency through the UPDATE path, so a concurrent delete of that new
+/// parent still aborts the child commit.
+#[turso_macros::test]
+fn test_fk_dependency_update_tracks_new_rowid_parent(tmp_db: TempDatabase) -> anyhow::Result<()> {
+    let conn0 = tmp_db.connect_limbo();
+    conn0.pragma_update("journal_mode", "'mvcc'")?;
+    conn0.execute("PRAGMA foreign_keys = ON")?;
+    conn0.execute("CREATE TABLE parent(id INTEGER PRIMARY KEY)")?;
+    conn0.execute(
+        "CREATE TABLE child(id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent(id))",
+    )?;
+    conn0.execute("INSERT INTO parent VALUES (1)")?;
+    conn0.execute("INSERT INTO parent VALUES (2)")?;
+    conn0.execute("INSERT INTO child VALUES (1, 1)")?;
+
+    let conn1 = tmp_db.connect_limbo();
+    let conn2 = tmp_db.connect_limbo();
+    conn1.execute("PRAGMA foreign_keys = ON")?;
+    conn2.execute("PRAGMA foreign_keys = ON")?;
+
+    conn1.execute("BEGIN CONCURRENT")?;
+    conn2.execute("BEGIN CONCURRENT")?;
+
+    conn2.execute("UPDATE child SET parent_id = 2 WHERE id = 1")?;
+    conn1.execute("DELETE FROM parent WHERE id = 2")?;
+
+    conn1.execute("COMMIT")?;
+    let err = conn2
+        .execute("COMMIT")
+        .expect_err("updated child must fail commit after concurrent delete of new parent");
+    assert!(
+        matches!(err, turso_core::LimboError::ForeignKeyConstraint(_)),
+        "expected foreign-key failure, got {err:?}"
+    );
+
+    let parents: Vec<(i64,)> = conn0.exec_rows("SELECT id FROM parent ORDER BY id");
+    assert_eq!(parents, vec![(1,)]);
+    let children: Vec<(i64, i64)> =
+        conn0.exec_rows("SELECT id, parent_id FROM child ORDER BY id, parent_id");
+    assert_eq!(children, vec![(1, 1)]);
+
+    Ok(())
+}
+
+/// Same as the rowid case, but through a referenced UNIQUE parent key so the
+/// index-prefix UPDATE dependency path is exercised.
+#[turso_macros::test]
+fn test_fk_dependency_unique_key_update_tracks_new_parent(
+    tmp_db: TempDatabase,
+) -> anyhow::Result<()> {
+    let conn0 = tmp_db.connect_limbo();
+    conn0.pragma_update("journal_mode", "'mvcc'")?;
+    conn0.execute("PRAGMA foreign_keys = ON")?;
+    conn0.execute("CREATE TABLE parent(id INTEGER PRIMARY KEY, k INTEGER UNIQUE)")?;
+    conn0.execute(
+        "CREATE TABLE child(id INTEGER PRIMARY KEY, parent_k INTEGER REFERENCES parent(k))",
+    )?;
+    conn0.execute("INSERT INTO parent VALUES (1, 7)")?;
+    conn0.execute("INSERT INTO parent VALUES (2, 8)")?;
+    conn0.execute("INSERT INTO child VALUES (1, 7)")?;
+
+    let conn1 = tmp_db.connect_limbo();
+    let conn2 = tmp_db.connect_limbo();
+    conn1.execute("PRAGMA foreign_keys = ON")?;
+    conn2.execute("PRAGMA foreign_keys = ON")?;
+
+    conn1.execute("BEGIN CONCURRENT")?;
+    conn2.execute("BEGIN CONCURRENT")?;
+
+    conn2.execute("UPDATE child SET parent_k = 8 WHERE id = 1")?;
+    conn1.execute("DELETE FROM parent WHERE id = 2")?;
+
+    conn1.execute("COMMIT")?;
+    let err = conn2
+        .execute("COMMIT")
+        .expect_err("updated child must fail commit after concurrent delete of new unique parent");
+    assert!(
+        matches!(err, turso_core::LimboError::ForeignKeyConstraint(_)),
+        "expected foreign-key failure, got {err:?}"
+    );
+
+    let parents: Vec<(i64, i64)> = conn0.exec_rows("SELECT id, k FROM parent ORDER BY id");
+    assert_eq!(parents, vec![(1, 7)]);
+    let children: Vec<(i64, i64)> =
+        conn0.exec_rows("SELECT id, parent_k FROM child ORDER BY id, parent_k");
+    assert_eq!(children, vec![(1, 7)]);
+
+    Ok(())
+}
+
 /// Upgrading an existing MVCC transaction from read to write must not leak an
 /// extra blocking-checkpoint read lock.  The sequence BEGIN -> SELECT -> INSERT ->
 /// COMMIT must leave checkpoint unblocked.
