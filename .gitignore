@@ -39,6 +39,10 @@ perf/mobibench/plot/uv.lock
 # Javascript
 **/node_modules/
 
+# Zig
+**/.zig-cache/
+**/zig-out/
+
 # testing
 testing/limbo_output.txt
 **/limbo_output.txt
