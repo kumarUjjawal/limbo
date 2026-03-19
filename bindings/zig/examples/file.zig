@@ -25,7 +25,9 @@ pub fn main() !void {
     var stmt = try conn.prepare("SELECT id, title FROM posts ORDER BY id DESC LIMIT 1");
     defer stmt.deinit();
 
-    const stdout = std.fs.File.stdout().deprecatedWriter();
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout = std.fs.File.stdout().writer(&stdout_buffer);
+    const writer = &stdout.interface;
     while (try stmt.step() == .row) {
         var id = try stmt.readValueAlloc(std.heap.page_allocator, 0);
         defer id.deinit(std.heap.page_allocator);
@@ -33,8 +35,10 @@ pub fn main() !void {
         var title = try stmt.readValueAlloc(std.heap.page_allocator, 1);
         defer title.deinit(std.heap.page_allocator);
 
-        try stdout.print("latest post: {f}, {f}\n", .{ id, title });
+        try writer.print("latest post: {f}, {f}\n", .{ id, title });
     }
+
+    try writer.flush();
 }
 
 fn cleanupFile(path: []const u8) void {

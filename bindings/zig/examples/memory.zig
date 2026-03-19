@@ -15,8 +15,10 @@ pub fn main() !void {
     var stmt = try conn.prepare("SELECT id, name FROM users ORDER BY id");
     defer stmt.deinit();
 
-    const stdout = std.fs.File.stdout().deprecatedWriter();
-    try stdout.print("turso version: {s}\n", .{turso.version()});
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout = std.fs.File.stdout().writer(&stdout_buffer);
+    const writer = &stdout.interface;
+    try writer.print("turso version: {s}\n", .{turso.version()});
 
     while (try stmt.step() == .row) {
         var id = try stmt.readValueAlloc(std.heap.page_allocator, 0);
@@ -25,6 +27,8 @@ pub fn main() !void {
         var name = try stmt.readValueAlloc(std.heap.page_allocator, 1);
         defer name.deinit(std.heap.page_allocator);
 
-        try stdout.print("row: {f}, {f}\n", .{ id, name });
+        try writer.print("row: {f}, {f}\n", .{ id, name });
     }
+
+    try writer.flush();
 }

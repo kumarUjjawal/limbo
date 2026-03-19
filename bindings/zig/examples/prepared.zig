@@ -10,22 +10,24 @@ pub fn main() !void {
 
     _ = try conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
 
-    var insert_stmt = try conn.prepare("INSERT INTO users (name) VALUES (?1)");
+    var insert_stmt = try conn.prepare("INSERT INTO users (name) VALUES (:name)");
     defer insert_stmt.deinit();
 
-    try insert_stmt.bindText(1, "alice");
+    try insert_stmt.bindNamed(":name", .{ .text = "alice" });
     _ = try insert_stmt.execute();
     try insert_stmt.reset();
 
-    try insert_stmt.bindText(1, "bob");
+    try insert_stmt.bindNamed(":name", .{ .text = "bob" });
     _ = try insert_stmt.execute();
 
-    var query_stmt = try conn.prepare("SELECT id, name FROM users WHERE name = ?1");
+    var query_stmt = try conn.prepare("SELECT id, name FROM users WHERE name = :name");
     defer query_stmt.deinit();
 
-    try query_stmt.bindText(1, "alice");
+    try query_stmt.bindNamed(":name", .{ .text = "alice" });
 
-    const stdout = std.fs.File.stdout().deprecatedWriter();
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout = std.fs.File.stdout().writer(&stdout_buffer);
+    const writer = &stdout.interface;
     while (try query_stmt.step() == .row) {
         var id = try query_stmt.readValueAlloc(std.heap.page_allocator, 0);
         defer id.deinit(std.heap.page_allocator);
@@ -33,6 +35,8 @@ pub fn main() !void {
         var name = try query_stmt.readValueAlloc(std.heap.page_allocator, 1);
         defer name.deinit(std.heap.page_allocator);
 
-        try stdout.print("matched row: {f}, {f}\n", .{ id, name });
+        try writer.print("matched row: {f}, {f}\n", .{ id, name });
     }
+
+    try writer.flush();
 }

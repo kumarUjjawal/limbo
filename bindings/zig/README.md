@@ -12,7 +12,8 @@ The Zig binding currently focuses on the smallest runnable local database module
 
 - **SQLite compatible:** SQLite query language and file format support ([status](../../COMPAT.md)).
 - **In-process**: No network overhead, runs directly in your application
-- **Prepared statements**: Reuse statements with positional parameter binding
+- **Prepared statements**: Reuse statements with positional and named parameter binding
+- **Batch execution**: Run multi-statement setup or migration SQL through `Connection.execBatch`
 - **Owned values**: Text and blob row values are copied into owned Zig values
 - **Small surface area**: Focused local API built around `Database`, `Connection`, `Statement`, and `Value`
 
@@ -21,15 +22,16 @@ The Zig binding currently focuses on the smallest runnable local database module
 - local database handles for `:memory:` and file-backed paths
 - blocking database API
 - direct SQL execution with `Connection.exec`
-- prepared statements with positional parameters such as `?1`
-- row stepping, column metadata, and owned `Value` reads
+- multi-statement execution with `Connection.execBatch`
+- prepared statements with positional and named parameters, including numbered placeholders such as `?1` and `?3`
+- connection helpers for busy timeout, autocommit state, and last insert row id
+- row stepping, statement metadata, and owned `Value` reads
 - explicit resource cleanup with `deinit`
 
 ## Not Yet Supported
 
 - remote sync
 - async or non-blocking APIs
-- named parameter binding
 - standalone package publishing
 - cross-target `zig build -Dtarget=...`
 
@@ -160,7 +162,7 @@ pub fn main() !void {
         var name = try stmt.readValueAlloc(std.heap.page_allocator, 1);
         defer name.deinit(std.heap.page_allocator);
 
-        std.debug.print("row: {any}, {any}\n", .{ id, name });
+        std.debug.print("row: {f}, {f}\n", .{ id, name });
     }
 }
 ```
@@ -207,25 +209,25 @@ pub fn main() !void {
 
     _ = try conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
 
-    var insert_stmt = try conn.prepare("INSERT INTO users (name) VALUES (?1)");
+    var insert_stmt = try conn.prepare("INSERT INTO users (name) VALUES (:name)");
     defer insert_stmt.deinit();
 
-    try insert_stmt.bindText(1, "alice");
+    try insert_stmt.bindNamed(":name", .{ .text = "alice" });
     _ = try insert_stmt.execute();
     try insert_stmt.reset();
 
-    try insert_stmt.bindText(1, "bob");
+    try insert_stmt.bindNamed(":name", .{ .text = "bob" });
     _ = try insert_stmt.execute();
 
-    var query_stmt = try conn.prepare("SELECT id, name FROM users WHERE name = ?1");
+    var query_stmt = try conn.prepare("SELECT id, name FROM users WHERE name = :name");
     defer query_stmt.deinit();
 
-    try query_stmt.bindText(1, "alice");
+    try query_stmt.bindNamed(":name", .{ .text = "alice" });
 
     while (try query_stmt.step() == .row) {
         var value = try query_stmt.readValueAlloc(std.heap.page_allocator, 1);
         defer value.deinit(std.heap.page_allocator);
-        std.debug.print("{any}\n", .{value});
+        std.debug.print("{f}\n", .{value});
     }
 }
 ```
@@ -250,9 +252,15 @@ var conn = try db.connect();
 defer conn.deinit();
 
 _ = try conn.exec("CREATE TABLE users (name TEXT NOT NULL)");
+try conn.execBatch(
+    \\INSERT INTO users (name) VALUES ('alice');
+    \\PRAGMA user_version;
+);
 
-var stmt = try conn.prepare("INSERT INTO users (name) VALUES (?1)");
-defer stmt.deinit();
+try conn.busyTimeoutMs(5_000);
+const autocommit = try conn.isAutocommit();
+const rowid = try conn.lastInsertRowId();
+_ = .{ autocommit, rowid };
 ```
 
 ### Statement
@@ -260,9 +268,10 @@ defer stmt.deinit();
 Bind values, step through rows, and read owned results:
 
 ```zig
-try stmt.bindText(1, "alice");
-_ = try stmt.execute();
-try stmt.reset();
+var stmt = try conn.prepare("SELECT name FROM users WHERE name = :name");
+defer stmt.deinit();
+
+try stmt.bindNamed(":name", .{ .text = "alice" });
 
 while (try stmt.step() == .row) {
     var value = try stmt.readValueAlloc(allocator, 0);
@@ -292,7 +301,8 @@ switch (value) {
 ## Behavior and Conventions
 
 - `Database`, `Connection`, `Statement`, and owned `Value` buffers must be cleaned up explicitly with `deinit`.
-- Parameter binding is positional today.
+- Parameter binding supports positional and named placeholders. Named lookups must include the SQLite prefix such as `:name`, `@name`, `$name`, or `?3`.
+- `Connection.execBatch` executes each statement to completion and discards any produced rows.
 - The current binding is blocking and local-only.
 - Row text and blob values are copied before being returned to user code.
 

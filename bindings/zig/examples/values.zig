@@ -14,7 +14,9 @@ pub fn main() !void {
     var stmt = try conn.prepare("SELECT i, r, t, b, n FROM values_demo");
     defer stmt.deinit();
 
-    const stdout = std.fs.File.stdout().deprecatedWriter();
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout = std.fs.File.stdout().writer(&stdout_buffer);
+    const writer = &stdout.interface;
     while (try stmt.step() == .row) {
         var column_index: usize = 0;
         while (column_index < try stmt.columnCount()) : (column_index += 1) {
@@ -22,18 +24,20 @@ pub fn main() !void {
             defer value.deinit(std.heap.page_allocator);
 
             switch (value) {
-                .null => try stdout.print("column {d}: NULL\n", .{column_index}),
-                .integer => |v| try stdout.print("column {d}: integer {d}\n", .{ column_index, v }),
-                .real => |v| try stdout.print("column {d}: real {d}\n", .{ column_index, v }),
-                .text => |v| try stdout.print("column {d}: text {s}\n", .{ column_index, v }),
+                .null => try writer.print("column {d}: NULL\n", .{column_index}),
+                .integer => |v| try writer.print("column {d}: integer {d}\n", .{ column_index, v }),
+                .real => |v| try writer.print("column {d}: real {d}\n", .{ column_index, v }),
+                .text => |v| try writer.print("column {d}: text {s}\n", .{ column_index, v }),
                 .blob => |v| {
-                    try stdout.print("column {d}: blob ", .{column_index});
+                    try writer.print("column {d}: blob ", .{column_index});
                     for (v) |byte| {
-                        try stdout.print("{x:0>2}", .{byte});
+                        try writer.print("{x:0>2}", .{byte});
                     }
-                    try stdout.print("\n", .{});
+                    try writer.print("\n", .{});
                 },
             }
         }
     }
+
+    try writer.flush();
 }

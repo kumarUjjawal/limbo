@@ -45,18 +45,14 @@ pub const Connection = struct {
 
     /// Executes every statement found in `sql`.
     ///
-    /// This is intended for DDL or script-style setup. If any statement
-    /// produces rows, batch execution stops and returns `UnexpectedStatus`,
-    /// matching the low-level `exec` contract.
+    /// This is intended for DDL or script-style setup. Statements that produce
+    /// rows are still executed to completion and their rows are discarded.
     pub fn execBatch(self: *Connection, sql: []const u8) (Allocator.Error || Error)!void {
         var remaining: []const u8 = sql;
         while (try self.prepareFirst(remaining)) |result| {
             var prepared = result;
             defer prepared.statement.deinit();
 
-            if (try prepared.statement.columnCount() != 0) {
-                return error.UnexpectedStatus;
-            }
             _ = try prepared.statement.execute();
 
             remaining = remaining[prepared.tail_index..];

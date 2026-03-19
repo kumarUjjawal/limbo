@@ -111,17 +111,19 @@ test "connection execBatch executes multi-statement SQL and ignores trailing whi
     });
 }
 
-test "connection execBatch stops at row-producing statements" {
+test "connection execBatch drains row-producing statements and continues" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    const result = fixture.conn.execBatch(
+    try fixture.conn.execBatch(
         \\CREATE TABLE t (x INTEGER);
         \\INSERT INTO t VALUES (1);
         \\SELECT x FROM t;
-        \\INSERT INTO t VALUES (2);
+        \\SELECT x FROM t WHERE 0;
+        \\PRAGMA user_version;
+        \\INSERT INTO t VALUES (2) RETURNING x;
+        \\INSERT INTO t VALUES (3);
     );
-    try std.testing.expectError(error.UnexpectedStatus, result);
 
     var stmt = try fixture.conn.prepare("SELECT COUNT(*) FROM t");
     defer stmt.deinit();
@@ -131,7 +133,7 @@ test "connection execBatch stops at row-producing statements" {
     defer count.deinit(std.testing.allocator);
 
     try std.testing.expect(switch (count) {
-        .integer => |v| v == 1,
+        .integer => |v| v == 3,
         else => false,
     });
 }

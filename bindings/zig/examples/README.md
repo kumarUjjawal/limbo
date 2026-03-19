@@ -14,5 +14,5 @@ zig build example-values
 |---------|-------------|
 | `memory` | Basic in-memory database usage with direct SQL execution and row reads |
 | `file` | File-backed database usage with basic cleanup after the example exits |
-| `prepared` | Reusing a prepared statement with positional parameter binding |
+| `prepared` | Reusing prepared statements with named parameter binding |
 | `values` | Reading integer, real, text, blob, and null values from a row |
