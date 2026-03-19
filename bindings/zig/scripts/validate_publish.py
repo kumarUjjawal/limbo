@@ -19,6 +19,114 @@ PUBLISHED_PATHS = (
     "src",
 )
 
+CONSUMER_BUILD_ZIG = """const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+    const sdk_prefix = b.option(
+        []const u8,
+        "turso-sdk-prefix",
+        "Path to the staged Turso SDK prefix used by the turso dependency.",
+    ) orelse failBuild(
+        \\\\error: provide -Dturso-sdk-prefix=/path/to/turso-sdk when validating the consumer project
+        \\\\
+    , .{});
+
+    const turso_dep = b.dependency("turso", .{
+        .target = target,
+        .optimize = optimize,
+        .@"turso-sdk-prefix" = sdk_prefix,
+        .@"turso-sdk-use-cargo" = false,
+    });
+
+    const exe = b.addExecutable(.{
+        .name = "consumer-smoke",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "turso", .module = turso_dep.module("turso") },
+            },
+        }),
+    });
+
+    const check_step = b.step("check", "Build the clean-room consumer project");
+    b.default_step = check_step;
+    check_step.dependOn(&exe.step);
+
+    const run_step = b.step("run", "Run the clean-room consumer smoke test");
+    const run_cmd = b.addRunArtifact(exe);
+    run_step.dependOn(&run_cmd.step);
+}
+
+fn failBuild(comptime fmt: []const u8, args: anytype) noreturn {
+    std.debug.print(fmt, args);
+    std.process.exit(1);
+}
+"""
+
+CONSUMER_BUILD_ZIG_ZON = """.{
+    .name = .consumer_smoke,
+    .version = "0.0.0",
+    .fingerprint = 0x822bb40da41a597d, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.15.2",
+    .dependencies = .{
+        .turso = .{
+            .path = "../turso",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
+"""
+
+CONSUMER_MAIN_ZIG = """const std = @import("std");
+const turso = @import("turso");
+
+pub fn main() !void {
+    var db = try turso.Database.open(":memory:");
+    defer db.deinit();
+
+    var conn = try db.connect();
+    defer conn.deinit();
+
+    try conn.execBatch(
+        \\\\CREATE TABLE publish_smoke (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+        \\\\INSERT INTO publish_smoke (name) VALUES ('smoke');
+        \\\\PRAGMA user_version;
+    );
+
+    var stmt = try conn.prepare("SELECT name FROM publish_smoke WHERE name = :name");
+    defer stmt.deinit();
+
+    try stmt.bindNamed(":name", .{ .text = "smoke" });
+    if (try stmt.step() != .row) {
+        return error.ValidationFailed;
+    }
+
+    var value = try stmt.readValueAlloc(std.heap.page_allocator, 0);
+    defer value.deinit(std.heap.page_allocator);
+
+    switch (value) {
+        .text => |text| {
+            if (!std.mem.eql(u8, text, "smoke")) {
+                return error.ValidationFailed;
+            }
+        },
+        else => return error.ValidationFailed,
+    }
+
+    if (try stmt.step() != .done) {
+        return error.ValidationFailed;
+    }
+}
+"""
+
 
 def copy_publish_tree(package_root: pathlib.Path, destination: pathlib.Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
@@ -34,6 +142,17 @@ def copy_publish_tree(package_root: pathlib.Path, destination: pathlib.Path) -> 
             shutil.copy2(source, target)
 
 
+def write_text(path: pathlib.Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def create_consumer_project(destination: pathlib.Path) -> None:
+    write_text(destination / "build.zig", CONSUMER_BUILD_ZIG)
+    write_text(destination / "build.zig.zon", CONSUMER_BUILD_ZIG_ZON)
+    write_text(destination / "src" / "main.zig", CONSUMER_MAIN_ZIG)
+
+
 def run(cmd: list[str], cwd: pathlib.Path) -> None:
     print(f"+ {shlex.join(cmd)}")
     subprocess.run(cmd, cwd=cwd, check=True)
@@ -41,22 +160,18 @@ def run(cmd: list[str], cwd: pathlib.Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Validate the publish-shaped Zig package and a clean-room consumer project.",
+        description="Validate the publish-shaped Zig package and a generated clean-room consumer project.",
     )
     parser.add_argument("--package-root", required=True, help="Path to bindings/zig.")
-    parser.add_argument("--consumer-root", required=True, help="Path to the clean-room consumer template.")
     parser.add_argument("--sdk-prefix", required=True, help="Path to a staged Turso SDK prefix.")
     parser.add_argument("--zig-exe", default="zig", help="Path to the Zig executable.")
     args = parser.parse_args()
 
     package_root = pathlib.Path(args.package_root).resolve()
-    consumer_root = pathlib.Path(args.consumer_root).resolve()
     sdk_prefix = pathlib.Path(args.sdk_prefix).resolve()
 
     if not package_root.is_dir():
         raise NotADirectoryError(f"package root does not exist: {package_root}")
-    if not consumer_root.is_dir():
-        raise NotADirectoryError(f"consumer root does not exist: {consumer_root}")
     if not sdk_prefix.is_dir():
         raise NotADirectoryError(f"sdk prefix does not exist: {sdk_prefix}")
 
@@ -95,7 +210,7 @@ def main() -> int:
         copied_package_root = temp_dir / "turso"
         copied_consumer_root = temp_dir / "consumer"
         copy_publish_tree(package_root, copied_package_root)
-        shutil.copytree(consumer_root, copied_consumer_root)
+        create_consumer_project(copied_consumer_root)
 
         run(
             [

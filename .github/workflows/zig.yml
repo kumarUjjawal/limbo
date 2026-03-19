@@ -51,5 +51,5 @@ jobs:
       - name: Stage SDK prefix
         run: python bindings/zig/scripts/stage_sdk_prefix.py --repo-root . --out-dir "${{ runner.temp }}/turso-sdk"
 
-      - name: Validate package and clean-room consumer
-        run: python bindings/zig/scripts/validate_publish.py --package-root bindings/zig --consumer-root bindings/zig/validation/consumer --sdk-prefix "${{ runner.temp }}/turso-sdk"
+      - name: Validate package and generated clean-room consumer
+        run: python bindings/zig/scripts/validate_publish.py --package-root bindings/zig --sdk-prefix "${{ runner.temp }}/turso-sdk"
