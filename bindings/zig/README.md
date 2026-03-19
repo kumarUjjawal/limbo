@@ -23,18 +23,29 @@ The Zig binding currently focuses on the smallest runnable local database module
 
 The Zig binding currently lives inside this repository and is not published as a standalone Zig package yet.
 
-Build it from the repository root:
+The current build uses Zig for the public package and Cargo for the shared `turso_sdk_kit` static library, so you need both toolchains installed.
+
+Build and check the package from the binding directory:
 
 ```bash
 cd bindings/zig
 zig build
 ```
 
+This default step compiles the module, the demo in `src/main.zig`, the runnable examples, and the test binaries.
+
 Run the demo:
 
 ```bash
 cd bindings/zig
 zig build run
+```
+
+Build the demo without running it:
+
+```bash
+cd bindings/zig
+zig build demo
 ```
 
 Run the tests:
@@ -50,11 +61,14 @@ Runnable examples live in [`examples/`](./examples).
 
 ```bash
 cd bindings/zig
+zig build examples
 zig build example-memory
 zig build example-file
 zig build example-prepared
 zig build example-values
 ```
+
+For now, the Zig binding supports native builds only. The package shells out to `cargo build -p turso_sdk_kit`, so cross-target `zig build -Dtarget=...` is not supported yet.
 
 ## Quick Start
 

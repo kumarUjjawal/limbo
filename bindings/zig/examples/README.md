@@ -1,6 +1,7 @@
 # Zig Examples
 
 ```bash
+zig build examples
 zig build example-memory
 zig build example-file
 zig build example-prepared
