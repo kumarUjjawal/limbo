@@ -63,6 +63,8 @@ pub const Database = @import("database.zig").Database;
 pub const Error = @import("error.zig").Error;
 /// Result of preparing the first statement from a SQL string.
 pub const PrepareFirstResult = @import("connection.zig").PrepareFirstResult;
+/// Borrowed value that can be bound to a prepared statement parameter.
+pub const BindValue = @import("statement.zig").BindValue;
 /// A prepared SQL statement.
 pub const Statement = @import("statement.zig").Statement;
 /// Result of stepping a prepared statement once.

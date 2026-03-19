@@ -18,6 +18,15 @@ pub const StepResult = enum {
     done,
 };
 
+/// Borrowed value that can be bound to a prepared statement parameter.
+pub const BindValue = union(enum) {
+    null,
+    integer: i64,
+    real: f64,
+    text: []const u8,
+    blob: []const u8,
+};
+
 /// A prepared SQL statement.
 pub const Statement = struct {
     handle: ?*c.turso_statement_t,
@@ -152,6 +161,26 @@ pub const Statement = struct {
             return error.UnexpectedStatus;
         }
         return @intCast(position);
+    }
+
+    /// Binds a borrowed value at a 1-based positional parameter.
+    pub fn bindValue(self: *Statement, position: usize, value: BindValue) Error!void {
+        switch (value) {
+            .null => try self.bindNull(position),
+            .integer => |v| try self.bindInt(position, v),
+            .real => |v| try self.bindFloat(position, v),
+            .text => |v| try self.bindText(position, v),
+            .blob => |v| try self.bindBlob(position, v),
+        }
+    }
+
+    /// Resolves `name` to a parameter position and binds `value`.
+    ///
+    /// Parameter names must include their SQLite prefix, such as `:name`,
+    /// `@name`, `$name`, or `?1`.
+    pub fn bindNamed(self: *Statement, name: []const u8, value: BindValue) (Allocator.Error || Error)!void {
+        const position = try self.namedPosition(name) orelse return error.Misuse;
+        try self.bindValue(position, value);
     }
 
     /// Binds `NULL` at a 1-based positional parameter.

@@ -61,6 +61,65 @@ test "statement supports bind types and owned reads" {
     try std.testing.expectEqual(turso.StepResult.done, try stmt.step());
 }
 
+test "statement bindValue and bindNamed support mixed parameter styles" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.exec("CREATE TABLE t (i INTEGER, r REAL, txt TEXT, b BLOB, n TEXT)");
+
+    var insert = try fixture.conn.prepare("INSERT INTO t VALUES (?1, :ratio, @label, $payload, ?5)");
+    defer insert.deinit();
+
+    try insert.bindNamed("?1", .{ .integer = 42 });
+    try insert.bindNamed(":ratio", .{ .real = 3.25 });
+    try insert.bindNamed("@label", .{ .text = "hello" });
+    try insert.bindNamed("$payload", .{ .blob = &.{ 0x01, 0x02, 0xff } });
+    try insert.bindValue(5, .null);
+    _ = try insert.execute();
+
+    var stmt = try fixture.conn.prepare("SELECT i, r, txt, b, n FROM t");
+    defer stmt.deinit();
+
+    try std.testing.expectEqual(turso.StepResult.row, try stmt.step());
+
+    var v0 = try stmt.readValueAlloc(std.testing.allocator, 0);
+    defer v0.deinit(std.testing.allocator);
+    try std.testing.expect(switch (v0) {
+        .integer => |v| v == 42,
+        else => false,
+    });
+
+    var v1 = try stmt.readValueAlloc(std.testing.allocator, 1);
+    defer v1.deinit(std.testing.allocator);
+    try std.testing.expect(switch (v1) {
+        .real => |v| v == 3.25,
+        else => false,
+    });
+
+    var v2 = try stmt.readValueAlloc(std.testing.allocator, 2);
+    defer v2.deinit(std.testing.allocator);
+    try std.testing.expect(switch (v2) {
+        .text => |v| std.mem.eql(u8, v, "hello"),
+        else => false,
+    });
+
+    var v3 = try stmt.readValueAlloc(std.testing.allocator, 3);
+    defer v3.deinit(std.testing.allocator);
+    try std.testing.expect(switch (v3) {
+        .blob => |v| std.mem.eql(u8, v, &.{ 0x01, 0x02, 0xff }),
+        else => false,
+    });
+
+    var v4 = try stmt.readValueAlloc(std.testing.allocator, 4);
+    defer v4.deinit(std.testing.allocator);
+    try std.testing.expect(switch (v4) {
+        .null => true,
+        else => false,
+    });
+
+    try std.testing.expectEqual(turso.StepResult.done, try stmt.step());
+}
+
 test "statement resets and re-executes" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
@@ -117,6 +176,17 @@ test "statement exposes parameter and column metadata" {
     try std.testing.expectEqualStrings("TEXT", name_decltype);
 
     try std.testing.expect((try metadata.columnDeclTypeAlloc(std.testing.allocator, 2)) == null);
+}
+
+test "statement bindNamed rejects missing and invalid names" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    var stmt = try fixture.conn.prepare("SELECT :named");
+    defer stmt.deinit();
+
+    try std.testing.expectError(error.Misuse, stmt.bindNamed("named", .{ .text = "hello" }));
+    try std.testing.expectError(error.Misuse, stmt.bindNamed(":missing", .{ .text = "hello" }));
 }
 
 test "statement reads empty text and blob values" {

@@ -85,3 +85,53 @@ test "connection exec surfaces SQL errors" {
     const result = fixture.conn.exec("NOT VALID SQL !@#");
     try std.testing.expectError(error.Database, result);
 }
+
+test "connection execBatch executes multi-statement SQL and ignores trailing whitespace" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    try fixture.conn.execBatch(
+        \\CREATE TABLE t (x INTEGER);
+        \\INSERT INTO t VALUES (1);
+        \\INSERT INTO t VALUES (2);
+        \\   
+        \\
+    );
+
+    var stmt = try fixture.conn.prepare("SELECT COUNT(*) FROM t");
+    defer stmt.deinit();
+
+    try std.testing.expectEqual(turso.StepResult.row, try stmt.step());
+    var count = try stmt.readValueAlloc(std.testing.allocator, 0);
+    defer count.deinit(std.testing.allocator);
+
+    try std.testing.expect(switch (count) {
+        .integer => |v| v == 2,
+        else => false,
+    });
+}
+
+test "connection execBatch stops at row-producing statements" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    const result = fixture.conn.execBatch(
+        \\CREATE TABLE t (x INTEGER);
+        \\INSERT INTO t VALUES (1);
+        \\SELECT x FROM t;
+        \\INSERT INTO t VALUES (2);
+    );
+    try std.testing.expectError(error.UnexpectedStatus, result);
+
+    var stmt = try fixture.conn.prepare("SELECT COUNT(*) FROM t");
+    defer stmt.deinit();
+
+    try std.testing.expectEqual(turso.StepResult.row, try stmt.step());
+    var count = try stmt.readValueAlloc(std.testing.allocator, 0);
+    defer count.deinit(std.testing.allocator);
+
+    try std.testing.expect(switch (count) {
+        .integer => |v| v == 1,
+        else => false,
+    });
+}
