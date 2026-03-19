@@ -47,6 +47,9 @@
 //! }
 //! ```
 //!
+//! Transactions are available through `Connection.transaction` and
+//! `Connection.transactionWithBehavior`.
+//!
 //! ## Current Limitations
 //!
 //! The current Zig binding is local-only and blocking-only. Handles must be
@@ -69,6 +72,10 @@ pub const BindValue = @import("statement.zig").BindValue;
 pub const Statement = @import("statement.zig").Statement;
 /// Result of stepping a prepared statement once.
 pub const StepResult = @import("statement.zig").StepResult;
+/// A transaction borrowing a connection handle.
+pub const Transaction = @import("transaction.zig").Transaction;
+/// Transaction begin mode.
+pub const TransactionBehavior = @import("transaction.zig").Behavior;
 /// Owned SQLite-compatible value returned by the binding.
 pub const Value = @import("value.zig").Value;
 

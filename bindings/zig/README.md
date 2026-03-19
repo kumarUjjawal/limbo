@@ -14,6 +14,7 @@ The Zig binding currently focuses on the smallest runnable local database module
 - **In-process**: No network overhead, runs directly in your application
 - **Prepared statements**: Reuse statements with positional and named parameter binding
 - **Batch execution**: Run multi-statement setup or migration SQL through `Connection.execBatch`
+- **Transactions**: Use deferred, immediate, or exclusive transactions with explicit commit and rollback
 - **Owned values**: Text and blob row values are copied into owned Zig values
 - **Small surface area**: Focused local API built around `Database`, `Connection`, `Statement`, and `Value`
 
@@ -23,6 +24,7 @@ The Zig binding currently focuses on the smallest runnable local database module
 - blocking database API
 - direct SQL execution with `Connection.exec`
 - multi-statement execution with `Connection.execBatch`
+- transactions with `Connection.transaction`, `Connection.transactionWithBehavior`, and `Transaction.commit` / `Transaction.rollback`
 - prepared statements with positional and named parameters, including numbered placeholders such as `?1` and `?3`
 - connection helpers for busy timeout, autocommit state, and last insert row id
 - row stepping, statement metadata, and owned `Value` reads
@@ -295,6 +297,20 @@ while (try stmt.step() == .row) {
 }
 ```
 
+### Transaction
+
+Run a group of statements atomically:
+
+```zig
+var tx = try conn.transactionWithBehavior(.immediate);
+defer tx.deinit();
+
+_ = try tx.exec("INSERT INTO users (name) VALUES ('alice')");
+_ = try tx.exec("INSERT INTO users (name) VALUES ('bob')");
+
+try tx.commit();
+```
+
 ### Working with Values
 
 Full example: [`examples/values.zig`](./examples/values.zig)
@@ -317,6 +333,7 @@ switch (value) {
 ## Behavior and Conventions
 
 - `Database`, `Connection`, `Statement`, and owned `Value` buffers must be cleaned up explicitly with `deinit`.
+- `Transaction.deinit` rolls back unfinished work. Call `commit` or `rollback` explicitly when the outcome matters.
 - Parameter binding supports positional and named placeholders. Named lookups must include the SQLite prefix such as `:name`, `@name`, `$name`, or `?3`.
 - `Connection.execBatch` executes each statement to completion and discards any produced rows.
 - The current binding is blocking and local-only.

@@ -6,9 +6,13 @@ const std = @import("std");
 const c = @import("c.zig").bindings;
 const errors = @import("error.zig");
 const Statement = @import("statement.zig").Statement;
+const transaction = @import("transaction.zig");
 
 const Allocator = std.mem.Allocator;
 const Error = errors.Error;
+const Transaction = transaction.Transaction;
+const TransactionBehavior = transaction.Behavior;
+const PendingAction = transaction.PendingAction;
 
 /// Result of preparing the first statement from a SQL string.
 pub const PrepareFirstResult = struct {
@@ -24,6 +28,7 @@ pub const PrepareFirstResult = struct {
 /// A connection to a local Turso database.
 pub const Connection = struct {
     handle: ?*c.turso_connection_t,
+    pending_tx_action: PendingAction = .none,
 
     /// Releases the connection handle.
     pub fn deinit(self: *Connection) void {
@@ -31,6 +36,7 @@ pub const Connection = struct {
             c.turso_connection_deinit(handle);
             self.handle = null;
         }
+        self.pending_tx_action = .none;
     }
 
     /// Executes a single SQL statement to completion.
@@ -38,6 +44,7 @@ pub const Connection = struct {
     /// For statements that return rows, use `prepare` and `Statement.step`
     /// instead so rows can be inspected explicitly.
     pub fn exec(self: *Connection, sql: []const u8) (Allocator.Error || Error)!u64 {
+        try self.resolvePendingTransaction();
         var stmt = try self.prepare(sql);
         defer stmt.deinit();
         return stmt.execute();
@@ -48,6 +55,7 @@ pub const Connection = struct {
     /// This is intended for DDL or script-style setup. Statements that produce
     /// rows are still executed to completion and their rows are discarded.
     pub fn execBatch(self: *Connection, sql: []const u8) (Allocator.Error || Error)!void {
+        try self.resolvePendingTransaction();
         var remaining: []const u8 = sql;
         while (try self.prepareFirst(remaining)) |result| {
             var prepared = result;
@@ -79,11 +87,32 @@ pub const Connection = struct {
         return c.turso_connection_last_insert_rowid(handle);
     }
 
+    /// Begins a new deferred transaction on this connection.
+    ///
+    /// Unfinished transactions roll back in `Transaction.deinit`.
+    pub fn transaction(self: *Connection) (Allocator.Error || Error)!Transaction {
+        return self.transactionWithBehavior(.deferred);
+    }
+
+    /// Begins a new transaction with the requested begin mode.
+    pub fn transactionWithBehavior(
+        self: *Connection,
+        behavior: TransactionBehavior,
+    ) (Allocator.Error || Error)!Transaction {
+        try self.resolvePendingTransaction();
+        _ = try self.exec(behavior.beginSql());
+        return .{
+            .connection_handle = &self.handle,
+            .pending_action = &self.pending_tx_action,
+        };
+    }
+
     /// Prepares a single SQL statement for later execution.
     ///
     /// The returned statement is an exclusive-use handle and must be cleaned up
     /// with `Statement.deinit`.
     pub fn prepare(self: *Connection, sql: []const u8) (Allocator.Error || Error)!Statement {
+        try self.resolvePendingTransaction();
         const handle = self.handle orelse return error.Misuse;
         const sql_z = try std.heap.c_allocator.dupeZ(u8, sql);
         defer std.heap.c_allocator.free(sql_z);
@@ -102,6 +131,7 @@ pub const Connection = struct {
     /// Returns `null` when no statement is found, such as when the input only
     /// contains whitespace.
     pub fn prepareFirst(self: *Connection, sql: []const u8) (Allocator.Error || Error)!?PrepareFirstResult {
+        try self.resolvePendingTransaction();
         const handle = self.handle orelse return error.Misuse;
         const sql_z = try std.heap.c_allocator.dupeZ(u8, sql);
         defer std.heap.c_allocator.free(sql_z);
@@ -126,4 +156,31 @@ pub const Connection = struct {
             .tail_index = tail_index,
         };
     }
+
+    fn resolvePendingTransaction(self: *Connection) (Allocator.Error || Error)!void {
+        switch (self.pending_tx_action) {
+            .none => {},
+            .rollback => {
+                const handle = self.handle orelse return error.Misuse;
+                _ = try execRollback(handle);
+                self.pending_tx_action = .none;
+            },
+        }
+    }
 };
+
+fn execRollback(handle: *c.turso_connection_t) (Allocator.Error || Error)!u64 {
+    const sql_z = try std.heap.c_allocator.dupeZ(u8, "ROLLBACK");
+    defer std.heap.c_allocator.free(sql_z);
+
+    var statement: ?*c.turso_statement_t = null;
+    var error_message: [*c]const u8 = null;
+    try errors.checkOk(
+        c.turso_connection_prepare_single(handle, sql_z.ptr, &statement, &error_message),
+        error_message,
+    );
+
+    var stmt: Statement = .{ .handle = statement };
+    defer stmt.deinit();
+    return stmt.execute();
+}
