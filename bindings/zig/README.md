@@ -2,28 +2,50 @@
 
 The next evolution of SQLite: a high-performance, SQLite-compatible database library for Zig.
 
+## About
+
+> **⚠️ Warning:** This software is in BETA. It may still contain bugs and unexpected behavior. Use caution with production data and ensure you have backups.
+
+The Zig binding currently focuses on the smallest runnable local database module and is built on the shared `sdk-kit/turso.h` C ABI used by the other Turso bindings.
+
 ## Features
 
-- **SQLite Compatible**: familiar local database API with prepared statements and positional parameter binding
-- **High Performance**: built on Turso's in-process database engine
-- **In-Process**: no network hop, runs directly inside your application
-- **Owned Values**: row text and blob values are copied into owned Zig values
-- **Small Surface Area**: built on the shared `sdk-kit/turso.h` C ABI used by other bindings
+- **SQLite compatible:** SQLite query language and file format support ([status](../../COMPAT.md)).
+- **In-process**: No network overhead, runs directly in your application
+- **Prepared statements**: Reuse statements with positional parameter binding
+- **Owned values**: Text and blob row values are copied into owned Zig values
+- **Small surface area**: Focused local API built around `Database`, `Connection`, `Statement`, and `Value`
 
-## Current Status
+## Supported Today
 
-The Zig binding currently focuses on the smallest runnable local database module:
+- local database handles for `:memory:` and file-backed paths
+- blocking database API
+- direct SQL execution with `Connection.exec`
+- prepared statements with positional parameters such as `?1`
+- row stepping, column metadata, and owned `Value` reads
+- explicit resource cleanup with `deinit`
 
-- local database only
-- blocking API only
-- native build only
-- no sync API yet
+## Not Yet Supported
+
+- remote sync
+- async or non-blocking APIs
+- named parameter binding
+- standalone package publishing
+- cross-target `zig build -Dtarget=...`
 
 ## Installation
 
 The Zig binding currently lives inside this repository and is not published as a standalone Zig package yet.
 
+The package entry point is `src/root.zig`. The `src/main.zig` file is only a runnable demo used by `zig build run`.
+
 The current build uses Zig for the public package and Cargo for the shared `turso_sdk_kit` static library, so you need both toolchains installed.
+
+### Requirements
+
+- Zig 0.15.2 or newer
+- Rust toolchain available in `PATH`
+- native host build
 
 Build and check the package from the binding directory:
 
@@ -55,6 +77,8 @@ cd bindings/zig
 zig build test
 ```
 
+For now, the Zig binding supports native builds only. The package shells out to `cargo build -p turso_sdk_kit`, so cross-target `zig build -Dtarget=...` is not supported yet.
+
 ## Examples
 
 Runnable examples live in [`examples/`](./examples).
@@ -67,8 +91,6 @@ zig build example-file
 zig build example-prepared
 zig build example-values
 ```
-
-For now, the Zig binding supports native builds only. The package shells out to `cargo build -p turso_sdk_kit`, so cross-target `zig build -Dtarget=...` is not supported yet.
 
 ## Quick Start
 
@@ -229,8 +251,19 @@ switch (value) {
 }
 ```
 
-## Notes
+## Behavior and Conventions
 
-- `Database`, `Connection`, `Statement`, and owned `Value` buffers must be cleaned up explicitly.
+- `Database`, `Connection`, `Statement`, and owned `Value` buffers must be cleaned up explicitly with `deinit`.
+- Parameter binding is positional today.
+- The current binding is blocking and local-only.
 - Row text and blob values are copied before being returned to user code.
-- The current binding does not expose remote sync yet.
+
+## License
+
+This project is licensed under the [MIT license](./LICENSE.md).
+
+## Support
+
+- [GitHub Issues](https://github.com/tursodatabase/turso/issues)
+- [Documentation](https://docs.turso.tech)
+- [Discord Community](https://tur.so/discord)
