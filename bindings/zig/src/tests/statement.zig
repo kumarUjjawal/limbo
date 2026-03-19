@@ -175,6 +175,11 @@ test "statement exposes parameter and column metadata" {
     defer std.testing.allocator.free(name_decltype);
     try std.testing.expectEqualStrings("TEXT", name_decltype);
 
+    try std.testing.expectEqual(@as(usize, 0), try metadata.columnIndex("ID"));
+    try std.testing.expectEqual(@as(usize, 1), try metadata.columnIndex("name"));
+    try std.testing.expectEqual(@as(usize, 2), try metadata.columnIndex("computed"));
+    try std.testing.expectError(error.Misuse, metadata.columnIndex("missing"));
+
     try std.testing.expect((try metadata.columnDeclTypeAlloc(std.testing.allocator, 2)) == null);
 }
 
@@ -214,4 +219,66 @@ test "statement reads empty text and blob values" {
         .blob => |v| v.len == 0,
         else => false,
     });
+}
+
+test "statement readValueByNameAlloc and readRowAlloc use column names" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER, name TEXT)");
+    _ = try fixture.conn.exec("INSERT INTO users VALUES (7, 'alice')");
+
+    var stmt = try fixture.conn.prepare("SELECT id, name FROM users");
+    defer stmt.deinit();
+
+    try std.testing.expectEqual(turso.StepResult.row, try stmt.step());
+
+    var name = try stmt.readValueByNameAlloc(std.testing.allocator, "NAME");
+    defer name.deinit(std.testing.allocator);
+    try std.testing.expect(switch (name) {
+        .text => |value| std.mem.eql(u8, value, "alice"),
+        else => false,
+    });
+
+    var row = try stmt.readRowAlloc(std.testing.allocator);
+    defer row.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings("id", try row.columnName(0));
+    try std.testing.expectEqualStrings("name", try row.columnName(1));
+}
+
+test "statement queryRow returns first row and drains remaining rows" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER, name TEXT)");
+    try fixture.conn.execBatch(
+        \\INSERT INTO users VALUES (1, 'alice');
+        \\INSERT INTO users VALUES (2, 'bob');
+    );
+
+    var stmt = try fixture.conn.prepare("SELECT id, name FROM users ORDER BY id");
+    defer stmt.deinit();
+
+    var row = try stmt.queryRow(std.testing.allocator);
+    defer row.deinit(std.testing.allocator);
+
+    const id = try row.valueByName("id");
+    try std.testing.expect(switch (id.*) {
+        .integer => |value| value == 1,
+        else => false,
+    });
+
+    try std.testing.expectEqual(turso.StepResult.done, try stmt.step());
+}
+
+test "statement queryRow returns QueryReturnedNoRows for empty results" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER)");
+
+    var stmt = try fixture.conn.prepare("SELECT id FROM users");
+    defer stmt.deinit();
+
+    try std.testing.expectError(error.QueryReturnedNoRows, stmt.queryRow(std.testing.allocator));
 }

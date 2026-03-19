@@ -5,6 +5,7 @@
 const std = @import("std");
 const c = @import("c.zig").bindings;
 const errors = @import("error.zig");
+const Row = @import("row.zig").Row;
 const Value = @import("value.zig").Value;
 
 const Allocator = std.mem.Allocator;
@@ -115,6 +116,23 @@ pub const Statement = struct {
         return allocator.dupe(u8, std.mem.span(name_ptr));
     }
 
+    /// Returns the 0-based index for column `name`.
+    ///
+    /// Lookups are ASCII case-insensitive to match the Rust binding.
+    pub fn columnIndex(self: *Statement, name: []const u8) Error!usize {
+        const handle = self.handle orelse return error.Misuse;
+        const count = try self.columnCount();
+        for (0..count) |index| {
+            const column_name_ptr = c.turso_statement_column_name(handle, index) orelse return error.Misuse;
+            defer c.turso_str_deinit(column_name_ptr);
+
+            if (std.ascii.eqlIgnoreCase(std.mem.span(column_name_ptr), name)) {
+                return index;
+            }
+        }
+        return error.Misuse;
+    }
+
     /// Returns a copy of the declared type at `index`, if available.
     ///
     /// For computed expressions or result columns without a declared type, this
@@ -213,6 +231,17 @@ pub const Statement = struct {
         try errors.checkStatusCode(c.turso_statement_bind_positional_blob(handle, position, value.ptr, value.len));
     }
 
+    /// Reads a value from the current row by column name.
+    ///
+    /// Lookups are ASCII case-insensitive to match the Rust binding.
+    pub fn readValueByNameAlloc(
+        self: *Statement,
+        allocator: Allocator,
+        name: []const u8,
+    ) (Allocator.Error || Error)!Value {
+        return self.readValueAlloc(allocator, try self.columnIndex(name));
+    }
+
     /// Reads a value from the current row and returns an owned copy when needed.
     ///
     /// Text and blob values are copied before being returned because row
@@ -228,6 +257,62 @@ pub const Statement = struct {
             c.TURSO_TYPE_BLOB => .{ .blob = try copyRowBytes(allocator, handle, index) },
             else => error.Misuse,
         };
+    }
+
+    /// Copies the current row into an owned `Row`.
+    ///
+    /// Call this only after `step` returns `.row`.
+    pub fn readRowAlloc(self: *Statement, allocator: Allocator) (Allocator.Error || Error)!Row {
+        const count = try self.columnCount();
+        var column_names = try allocator.alloc([]u8, count);
+        errdefer allocator.free(column_names);
+        var values = try allocator.alloc(Value, count);
+        errdefer allocator.free(values);
+
+        var names_initialized: usize = 0;
+        errdefer {
+            while (names_initialized > 0) {
+                names_initialized -= 1;
+                allocator.free(column_names[names_initialized]);
+            }
+        }
+
+        var values_initialized: usize = 0;
+        errdefer {
+            while (values_initialized > 0) {
+                values_initialized -= 1;
+                values[values_initialized].deinit(allocator);
+            }
+        }
+
+        for (0..count) |index| {
+            column_names[index] = try self.columnNameAlloc(allocator, index);
+            names_initialized += 1;
+            values[index] = try self.readValueAlloc(allocator, index);
+            values_initialized += 1;
+        }
+
+        return .{
+            .column_names = column_names,
+            .values = values,
+        };
+    }
+
+    /// Returns the first row from the current statement as an owned `Row`.
+    ///
+    /// Remaining rows are stepped to completion so statement-side effects match
+    /// `execute`.
+    pub fn queryRow(self: *Statement, allocator: Allocator) (Allocator.Error || Error)!Row {
+        switch (try self.step()) {
+            .done => return error.QueryReturnedNoRows,
+            .row => {
+                var row = try self.readRowAlloc(allocator);
+                errdefer row.deinit(allocator);
+
+                while (try self.step() == .row) {}
+                return row;
+            },
+        }
     }
 };
 

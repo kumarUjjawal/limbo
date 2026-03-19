@@ -82,6 +82,29 @@ test "transaction methods reject use after finish" {
     try std.testing.expectError(error.Misuse, tx.rollback());
 }
 
+test "transaction queryRow sees in-flight changes" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER, name TEXT)");
+
+    var tx = try fixture.conn.transaction();
+    defer tx.deinit();
+
+    _ = try tx.exec("INSERT INTO users VALUES (1, 'alice')");
+
+    var row = try tx.queryRow(std.testing.allocator, "SELECT name FROM users");
+    defer row.deinit(std.testing.allocator);
+
+    const name = try row.valueByName("name");
+    try std.testing.expect(switch (name.*) {
+        .text => |value| std.mem.eql(u8, value, "alice"),
+        else => false,
+    });
+
+    try tx.rollback();
+}
+
 test "transaction behavior export is available" {
     const behavior: turso.TransactionBehavior = .deferred;
     try std.testing.expectEqual(turso.TransactionBehavior.deferred, behavior);

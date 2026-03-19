@@ -15,8 +15,9 @@ The Zig binding currently focuses on the smallest runnable local database module
 - **Prepared statements**: Reuse statements with positional and named parameter binding
 - **Batch execution**: Run multi-statement setup or migration SQL through `Connection.execBatch`
 - **Transactions**: Use deferred, immediate, or exclusive transactions with explicit commit and rollback
+- **Single-row queries**: Fetch an owned `Row` with `queryRow` and access values by index or column name
 - **Owned values**: Text and blob row values are copied into owned Zig values
-- **Small surface area**: Focused local API built around `Database`, `Connection`, `Statement`, and `Value`
+- **Small surface area**: Focused local API built around `Database`, `Connection`, `Transaction`, `Statement`, `Row`, and `Value`
 
 ## Supported Today
 
@@ -26,8 +27,9 @@ The Zig binding currently focuses on the smallest runnable local database module
 - multi-statement execution with `Connection.execBatch`
 - transactions with `Connection.transaction`, `Connection.transactionWithBehavior`, and `Transaction.commit` / `Transaction.rollback`
 - prepared statements with positional and named parameters, including numbered placeholders such as `?1` and `?3`
+- single-row queries through `Connection.queryRow`, `Transaction.queryRow`, and `Statement.queryRow`
 - connection helpers for busy timeout, autocommit state, and last insert row id
-- row stepping, statement metadata, and owned `Value` reads
+- row stepping, owned `Row` wrappers, statement metadata, and owned `Value` reads
 - explicit resource cleanup with `deinit`
 
 ## Not Yet Supported
@@ -311,6 +313,19 @@ _ = try tx.exec("INSERT INTO users (name) VALUES ('bob')");
 try tx.commit();
 ```
 
+### Row
+
+`queryRow` returns an owned row with copied column names and values:
+
+```zig
+var row = try conn.queryRow(allocator, "SELECT id, name FROM users");
+defer row.deinit(allocator);
+
+const id = try row.valueByName("id");
+const name = try row.value(1);
+_ = .{ id, name };
+```
+
 ### Working with Values
 
 Full example: [`examples/values.zig`](./examples/values.zig)
@@ -335,6 +350,7 @@ switch (value) {
 - `Database`, `Connection`, `Statement`, and owned `Value` buffers must be cleaned up explicitly with `deinit`.
 - `Transaction.deinit` rolls back unfinished work. Call `commit` or `rollback` explicitly when the outcome matters.
 - Parameter binding supports positional and named placeholders. Named lookups must include the SQLite prefix such as `:name`, `@name`, `$name`, or `?3`.
+- Column-name lookups on `Statement` and `Row` are ASCII case-insensitive to match the Rust binding.
 - `Connection.execBatch` executes each statement to completion and discards any produced rows.
 - The current binding is blocking and local-only.
 - Row text and blob values are copied before being returned to user code.

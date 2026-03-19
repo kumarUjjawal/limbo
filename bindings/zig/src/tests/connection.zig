@@ -86,6 +86,24 @@ test "connection exec surfaces SQL errors" {
     try std.testing.expectError(error.Database, result);
 }
 
+test "connection queryRow returns owned row" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER, name TEXT)");
+    _ = try fixture.conn.exec("INSERT INTO users VALUES (1, 'alice')");
+
+    var row = try fixture.conn.queryRow(std.testing.allocator, "SELECT id, name FROM users");
+    defer row.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 0), try row.columnIndex("id"));
+    const name = try row.valueByName("NAME");
+    try std.testing.expect(switch (name.*) {
+        .text => |value| std.mem.eql(u8, value, "alice"),
+        else => false,
+    });
+}
+
 test "connection execBatch executes multi-statement SQL and ignores trailing whitespace" {
     var fixture = try support.openMemory();
     defer fixture.deinit();

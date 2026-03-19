@@ -50,6 +50,9 @@
 //! Transactions are available through `Connection.transaction` and
 //! `Connection.transactionWithBehavior`.
 //!
+//! Single-row query ergonomics are available through `Connection.queryRow`,
+//! `Transaction.queryRow`, and `Statement.queryRow`.
+//!
 //! ## Current Limitations
 //!
 //! The current Zig binding is local-only and blocking-only. Handles must be
@@ -76,6 +79,8 @@ pub const StepResult = @import("statement.zig").StepResult;
 pub const Transaction = @import("transaction.zig").Transaction;
 /// Transaction begin mode.
 pub const TransactionBehavior = @import("transaction.zig").Behavior;
+/// A single owned query result row.
+pub const Row = @import("row.zig").Row;
 /// Owned SQLite-compatible value returned by the binding.
 pub const Value = @import("value.zig").Value;
 

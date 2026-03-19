@@ -5,6 +5,7 @@
 const std = @import("std");
 const c = @import("c.zig").bindings;
 const errors = @import("error.zig");
+const Row = @import("row.zig").Row;
 const Statement = @import("statement.zig").Statement;
 const transaction = @import("transaction.zig");
 
@@ -85,6 +86,13 @@ pub const Connection = struct {
     pub fn lastInsertRowId(self: *Connection) Error!i64 {
         const handle = self.handle orelse return error.Misuse;
         return c.turso_connection_last_insert_rowid(handle);
+    }
+
+    /// Returns the first row from `sql` as an owned `Row`.
+    pub fn queryRow(self: *Connection, allocator: Allocator, sql: []const u8) (Allocator.Error || Error)!Row {
+        var stmt = try self.prepare(sql);
+        defer stmt.deinit();
+        return stmt.queryRow(allocator);
     }
 
     /// Begins a new deferred transaction on this connection.

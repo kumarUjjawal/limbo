@@ -7,6 +7,7 @@
 const std = @import("std");
 const c = @import("c.zig").bindings;
 const errors = @import("error.zig");
+const Row = @import("row.zig").Row;
 const Statement = @import("statement.zig").Statement;
 
 const Allocator = std.mem.Allocator;
@@ -94,6 +95,14 @@ pub const Transaction = struct {
     pub fn prepare(self: *Transaction, sql: []const u8) (Allocator.Error || Error)!Statement {
         const handle = try self.ensureOpenHandle();
         return prepareSingleOnHandle(handle, sql);
+    }
+
+    /// Returns the first row from `sql` as an owned `Row`.
+    pub fn queryRow(self: *Transaction, allocator: Allocator, sql: []const u8) (Allocator.Error || Error)!Row {
+        const handle = try self.ensureOpenHandle();
+        var stmt = try prepareSingleOnHandle(handle, sql);
+        defer stmt.deinit();
+        return stmt.queryRow(allocator);
     }
 
     /// Commits the transaction.

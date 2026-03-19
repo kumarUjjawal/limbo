@@ -17,6 +17,7 @@ pub const Error = error{
     NotADatabase,
     Corrupt,
     IoFailure,
+    QueryReturnedNoRows,
     UnexpectedStatus,
     NegativeValue,
 };
