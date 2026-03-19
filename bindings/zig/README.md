@@ -37,9 +37,13 @@ The Zig binding currently focuses on the smallest runnable local database module
 
 ## Installation
 
-The Zig binding currently lives inside this repository and is not published as a standalone Zig package yet.
-
 The package entry point is `src/root.zig`. The `src/main.zig` file is only a runnable demo used by `zig build run`.
+
+The default consumer contract for `0.0.1` is a matching Turso SDK prefix. The package expects:
+
+- `include/turso.h`
+- `lib/libturso_sdk_kit.a` on Unix-like systems
+- `lib/turso_sdk_kit.lib` on Windows
 
 ### Consumer Path: Prebuilt SDK
 
@@ -72,7 +76,19 @@ zig build \
 
 ### Repository Development Path
 
-For in-repository development, `build.zig` can still fall back to Cargo and build `turso_sdk_kit` from the workspace.
+For in-repository development, `build.zig` can still fall back to Cargo and build `turso_sdk_kit` from the workspace, but this path is now explicit:
+
+```bash
+cd bindings/zig
+zig build -Dturso-sdk-use-cargo=true
+```
+
+If the repository root cannot be discovered automatically, provide it directly:
+
+```bash
+cd bindings/zig
+zig build -Dturso-sdk-use-cargo=true -Dturso-sdk-repo-root=/path/to/limbo
+```
 
 ### Requirements
 
@@ -84,37 +100,37 @@ Build and check the package from the binding directory:
 
 ```bash
 cd bindings/zig
-zig build
+zig build -Dturso-sdk-prefix=/path/to/turso-sdk
 ```
 
-This default path compiles the module, the demo in `src/main.zig`, the runnable examples, and the test binaries. In repository development mode it also builds `turso_sdk_kit` through Cargo first.
+This default path compiles the module, the demo in `src/main.zig`, the runnable examples, and the test binaries.
 
 If you only want to build the shared SDK archive in repository development mode:
 
 ```bash
 cd bindings/zig
-zig build sdk
+zig build sdk -Dturso-sdk-use-cargo=true
 ```
 
 Run the demo:
 
 ```bash
 cd bindings/zig
-zig build run
+zig build run -Dturso-sdk-prefix=/path/to/turso-sdk
 ```
 
 Build the demo without running it:
 
 ```bash
 cd bindings/zig
-zig build demo
+zig build demo -Dturso-sdk-prefix=/path/to/turso-sdk
 ```
 
 Run the tests:
 
 ```bash
 cd bindings/zig
-zig build test
+zig build test -Dturso-sdk-prefix=/path/to/turso-sdk
 ```
 
 For now, the Zig binding supports native host builds only. Cross-target `zig build -Dtarget=...` is rejected until the Rust SDK artifact target is propagated alongside the Zig target.

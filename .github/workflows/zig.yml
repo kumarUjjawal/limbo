@@ -1,0 +1,55 @@
+name: Zig
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_NET_RETRY: 10
+
+jobs:
+  validate:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        os:
+          - blacksmith-4vcpu-ubuntu-2404
+          - macos-latest
+          - windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Setup mold linker
+        if: runner.os == 'Linux'
+        uses: "./.github/shared/setup-mold"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-rust-zig"
+          cache-on-failure: true
+      - uses: "./.github/shared/setup-sccache"
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build SDK archive
+        run: cargo build --locked -p turso_sdk_kit
+
+      - name: Stage SDK prefix
+        run: python bindings/zig/scripts/stage_sdk_prefix.py --repo-root . --out-dir "${{ runner.temp }}/turso-sdk"
+
+      - name: Validate package and clean-room consumer
+        run: python bindings/zig/scripts/validate_publish.py --package-root bindings/zig --consumer-root bindings/zig/validation/consumer --sdk-prefix "${{ runner.temp }}/turso-sdk"

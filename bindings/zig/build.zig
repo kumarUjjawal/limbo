@@ -11,7 +11,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     ensureNativeTarget(b, target);
 
-    const sdk = resolveSdkInputs(b, b.path("../.."), target.result.os.tag);
+    const sdk = resolveSdkInputs(b, target.result.os.tag);
 
     const mod = b.addModule("turso", .{
         .root_source_file = b.path("src/root.zig"),
@@ -134,7 +134,6 @@ fn addExample(
 
 fn resolveSdkInputs(
     b: *std.Build,
-    root_dir: std.Build.LazyPath,
     os_tag: std.Target.Os.Tag,
 ) SdkInputs {
     const sdk_prefix = b.option(
@@ -155,8 +154,18 @@ fn resolveSdkInputs(
     const sdk_use_cargo = b.option(
         bool,
         "turso-sdk-use-cargo",
-        "Build turso_sdk_kit from the workspace with Cargo when no prebuilt SDK is provided",
-    ) orelse true;
+        "Build turso_sdk_kit with Cargo as an explicit repository-development fallback",
+    ) orelse false;
+    const sdk_cargo_target_dir_opt = b.option(
+        []const u8,
+        "turso-sdk-cargo-target-dir",
+        "Path to the Cargo target directory used with -Dturso-sdk-use-cargo=true",
+    );
+    const sdk_repo_root_opt = b.option(
+        []const u8,
+        "turso-sdk-repo-root",
+        "Path to the Limbo repository root used with -Dturso-sdk-use-cargo=true",
+    );
 
     const sdk_include_dir = sdk_include_dir_opt orelse if (sdk_prefix) |prefix|
         b.pathJoin(&.{ prefix, "include" })
@@ -192,18 +201,38 @@ fn resolveSdkInputs(
     if (!sdk_use_cargo) {
         failBuild(
             \\error: no Turso SDK input was provided
-            \\set -Dturso-sdk-prefix=... or both -Dturso-sdk-include-dir=... and -Dturso-sdk-lib-path=...
-            \\or leave -Dturso-sdk-use-cargo enabled for repository development
+            \\published builds require a matching Turso SDK prefix or explicit include/lib paths
+            \\examples:
+            \\  zig build -Dturso-sdk-prefix=/path/to/turso-sdk
+            \\  zig build -Dturso-sdk-include-dir=/path/to/include -Dturso-sdk-lib-path=/path/to/libturso_sdk_kit.a
+            \\for repository development only, opt into the Cargo fallback explicitly:
+            \\  zig build -Dturso-sdk-use-cargo=true
+            \\  zig build -Dturso-sdk-use-cargo=true -Dturso-sdk-repo-root=/path/to/limbo
             \\
         , .{});
     }
 
-    const sdk_include_dir_fallback = b.path("../../sdk-kit");
-    const cargo_target_dir = b.graph.env_map.get("CARGO_TARGET_DIR") orelse b.pathJoin(&.{ "..", "..", "target" });
+    const repo_root = if (sdk_repo_root_opt) |repo_root|
+        repo_root
+    else if (detectRepoRoot(b)) |repo_root|
+        repo_root
+    else
+        failBuild(
+            \\error: could not locate the Limbo repository root for -Dturso-sdk-use-cargo=true
+            \\provide -Dturso-sdk-repo-root=/path/to/limbo or build against a prebuilt Turso SDK prefix
+            \\
+        , .{});
+
+    ensurePathExists(repo_root, "Limbo repository root");
+
+    const sdk_include_dir_fallback: std.Build.LazyPath = .{
+        .cwd_relative = b.pathJoin(&.{ repo_root, "sdk-kit" }),
+    };
+    const cargo_target_dir = sdk_cargo_target_dir_opt orelse detectCargoTargetDir(b, repo_root);
     const static_lib_path = b.pathJoin(&.{ cargo_target_dir, "debug", staticLibraryName(os_tag) });
 
     const cargo_build = b.addSystemCommand(&.{ "cargo", "build", "--locked", "-p", "turso_sdk_kit" });
-    cargo_build.setCwd(root_dir);
+    cargo_build.setCwd(.{ .cwd_relative = repo_root });
 
     return .{
         .include_dir = sdk_include_dir_fallback,
@@ -250,20 +279,77 @@ fn staticLibraryName(os_tag: std.Target.Os.Tag) []const u8 {
     };
 }
 
+fn detectRepoRoot(b: *std.Build) ?[]const u8 {
+    var current: []const u8 = b.pathFromRoot(".");
+
+    while (true) {
+        if (isRepoRoot(b, current)) {
+            return current;
+        }
+
+        const parent = std.fs.path.dirname(current) orelse return null;
+        if (std.mem.eql(u8, parent, current)) {
+            return null;
+        }
+        current = parent;
+    }
+}
+
+fn detectCargoTargetDir(b: *std.Build, repo_root: []const u8) []const u8 {
+    if (b.graph.env_map.get("CARGO_TARGET_DIR")) |target_dir| {
+        return target_dir;
+    }
+
+    const result = std.process.Child.run(.{
+        .allocator = b.allocator,
+        .argv = &.{ "cargo", "metadata", "--format-version", "1", "--no-deps" },
+        .cwd = repo_root,
+    }) catch |err| {
+        failBuild("error: unable to query cargo metadata: {s}\n", .{@errorName(err)});
+    };
+    defer b.allocator.free(result.stdout);
+    defer b.allocator.free(result.stderr);
+
+    if (result.term != .Exited or result.term.Exited != 0) {
+        failBuild("error: cargo metadata failed while resolving the Cargo target directory\n{s}\n", .{result.stderr});
+    }
+
+    const CargoMetadata = struct {
+        target_directory: []const u8,
+    };
+    const parsed = std.json.parseFromSlice(CargoMetadata, b.allocator, result.stdout, .{
+        .ignore_unknown_fields = true,
+    }) catch |err| {
+        failBuild("error: failed to parse cargo metadata: {s}\n", .{@errorName(err)});
+    };
+    defer parsed.deinit();
+
+    return b.dupePath(parsed.value.target_directory);
+}
+
+fn isRepoRoot(b: *std.Build, path: []const u8) bool {
+    return pathExists(b.pathJoin(&.{ path, "Cargo.toml" })) and
+        pathExists(b.pathJoin(&.{ path, "sdk-kit", "turso.h" })) and
+        pathExists(b.pathJoin(&.{ path, "bindings", "zig", "build.zig" }));
+}
+
 fn failBuild(comptime fmt: []const u8, args: anytype) noreturn {
     std.debug.print(fmt, args);
     std.process.exit(1);
 }
 
-fn ensurePathExists(path: []const u8, kind: []const u8) void {
+fn pathExists(path: []const u8) bool {
     if (std.fs.path.isAbsolute(path)) {
-        std.fs.accessAbsolute(path, .{}) catch {
-            failBuild("error: {s} not found: {s}\n", .{ kind, path });
-        };
-        return;
+        std.fs.accessAbsolute(path, .{}) catch return false;
+        return true;
     }
 
-    std.fs.cwd().access(path, .{}) catch {
+    std.fs.cwd().access(path, .{}) catch return false;
+    return true;
+}
+
+fn ensurePathExists(path: []const u8, kind: []const u8) void {
+    if (!pathExists(path)) {
         failBuild("error: {s} not found: {s}\n", .{ kind, path });
-    };
+    }
 }

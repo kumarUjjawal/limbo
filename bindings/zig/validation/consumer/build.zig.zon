@@ -1,0 +1,16 @@
+.{
+    .name = .consumer_smoke,
+    .version = "0.0.0",
+    .fingerprint = 0x822bb40da41a597d, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.15.2",
+    .dependencies = .{
+        .turso = .{
+            .path = "../turso",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
