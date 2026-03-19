@@ -106,6 +106,54 @@ pub const Statement = struct {
         return allocator.dupe(u8, std.mem.span(name_ptr));
     }
 
+    /// Returns a copy of the declared type at `index`, if available.
+    ///
+    /// For computed expressions or result columns without a declared type, this
+    /// returns `null`.
+    pub fn columnDeclTypeAlloc(
+        self: *Statement,
+        allocator: Allocator,
+        index: usize,
+    ) (Allocator.Error || Error)!?[]u8 {
+        const handle = self.handle orelse return error.Misuse;
+        const decltype_ptr = c.turso_statement_column_decltype(handle, index);
+        if (decltype_ptr == null) {
+            return null;
+        }
+        defer c.turso_str_deinit(decltype_ptr);
+        return try allocator.dupe(u8, std.mem.span(decltype_ptr));
+    }
+
+    /// Returns the number of parameters in the prepared statement.
+    pub fn parameterCount(self: *Statement) Error!usize {
+        const handle = self.handle orelse return error.Misuse;
+        const count = c.turso_statement_parameters_count(handle);
+        if (count < 0) {
+            return error.NegativeValue;
+        }
+        return @intCast(count);
+    }
+
+    /// Returns the 1-based position for a named or numbered parameter lookup.
+    ///
+    /// Parameter names must include their SQLite prefix, such as `:name`,
+    /// `@name`, `$name`, or `?1`. Returns `null` when the parameter is not
+    /// present in the statement.
+    pub fn namedPosition(self: *Statement, name: []const u8) (Allocator.Error || Error)!?usize {
+        const handle = self.handle orelse return error.Misuse;
+        const name_z = try std.heap.c_allocator.dupeZ(u8, name);
+        defer std.heap.c_allocator.free(name_z);
+
+        const position = c.turso_statement_named_position(handle, name_z.ptr);
+        if (position < 0) {
+            return null;
+        }
+        if (position == 0) {
+            return error.UnexpectedStatus;
+        }
+        return @intCast(position);
+    }
+
     /// Binds `NULL` at a 1-based positional parameter.
     pub fn bindNull(self: *Statement, position: usize) Error!void {
         const handle = self.handle orelse return error.Misuse;

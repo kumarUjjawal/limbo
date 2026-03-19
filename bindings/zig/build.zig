@@ -52,7 +52,7 @@ pub fn build(b: *std.Build) void {
     addExample(b, sdk, mod, target, optimize, check_step, examples_step, "values", "examples/values.zig", "Run the value decoding example");
 
     const mod_tests = b.addTest(.{
-        .root_module = createImportingModule(b, target, optimize, "src/tests.zig", mod),
+        .root_module = createImportingModule(b, target, optimize, "src/tests/root.zig", mod),
     });
     dependOnSdkBuild(&mod_tests.step, sdk);
     check_step.dependOn(&mod_tests.step);
