@@ -44,9 +44,23 @@ cd bindings/zig
 zig build test
 ```
 
+## Examples
+
+Runnable examples live in [`examples/`](./examples).
+
+```bash
+cd bindings/zig
+zig build example-memory
+zig build example-file
+zig build example-prepared
+zig build example-values
+```
+
 ## Quick Start
 
 ### In-Memory Database
+
+Full example: [`examples/memory.zig`](./examples/memory.zig)
 
 ```zig
 const std = @import("std");
@@ -79,6 +93,8 @@ pub fn main() !void {
 
 ### File-Based Database
 
+Full example: [`examples/file.zig`](./examples/file.zig)
+
 ```zig
 const turso = @import("turso");
 
@@ -101,6 +117,8 @@ pub fn main() !void {
 ```
 
 ### Prepared Statements
+
+Full example: [`examples/prepared.zig`](./examples/prepared.zig)
 
 ```zig
 const std = @import("std");
@@ -179,6 +197,8 @@ while (try stmt.step() == .row) {
 ```
 
 ### Working with Values
+
+Full example: [`examples/values.zig`](./examples/values.zig)
 
 The current Zig binding returns owned values for text and blob columns:
 

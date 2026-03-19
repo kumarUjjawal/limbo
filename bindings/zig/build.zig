@@ -44,6 +44,12 @@ pub fn build(b: *std.Build) void {
         run_cmd.addArgs(args);
     }
 
+    const examples_step = b.step("examples", "Build all Zig examples");
+    addExample(b, &cargo_build.step, mod, optimize, examples_step, "memory", "examples/memory.zig", "Run the in-memory example");
+    addExample(b, &cargo_build.step, mod, optimize, examples_step, "file", "examples/file.zig", "Run the file-backed example");
+    addExample(b, &cargo_build.step, mod, optimize, examples_step, "prepared", "examples/prepared.zig", "Run the prepared statement example");
+    addExample(b, &cargo_build.step, mod, optimize, examples_step, "values", "examples/values.zig", "Run the value decoding example");
+
     const mod_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/tests.zig"),
@@ -83,4 +89,36 @@ fn configureModule(
     if (b.graph.host.result.os.tag.isDarwin()) {
         module.linkFramework("CoreFoundation", .{});
     }
+}
+
+fn addExample(
+    b: *std.Build,
+    cargo_build_step: *std.Build.Step,
+    mod: *std.Build.Module,
+    optimize: std.builtin.OptimizeMode,
+    examples_step: *std.Build.Step,
+    name: []const u8,
+    root_source_path: []const u8,
+    description: []const u8,
+) void {
+    const exe_name = b.fmt("turso-zig-{s}", .{name});
+    const step_name = b.fmt("example-{s}", .{name});
+
+    const exe = b.addExecutable(.{
+        .name = exe_name,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(root_source_path),
+            .target = b.graph.host,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "turso", .module = mod },
+            },
+        }),
+    });
+    exe.step.dependOn(cargo_build_step);
+    examples_step.dependOn(&exe.step);
+
+    const run_step = b.step(step_name, description);
+    const run_cmd = b.addRunArtifact(exe);
+    run_step.dependOn(&run_cmd.step);
 }
