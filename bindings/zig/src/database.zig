@@ -1,3 +1,7 @@
+//! Local database handle for the Zig binding.
+//!
+//! A `Database` owns the underlying Turso database handle and can create
+//! exclusive-use connections to it.
 const std = @import("std");
 const c = @import("c.zig").bindings;
 const Connection = @import("connection.zig").Connection;
@@ -6,9 +10,13 @@ const errors = @import("error.zig");
 const Allocator = std.mem.Allocator;
 const Error = errors.Error;
 
+/// A local Turso database handle.
 pub const Database = struct {
     handle: ?*const c.turso_database_t,
 
+    /// Opens a local database at `path`.
+    ///
+    /// Use `:memory:` to create an in-memory database.
     pub fn open(path: []const u8) (Allocator.Error || Error)!Database {
         const path_z = try std.heap.page_allocator.dupeZ(u8, path);
         defer std.heap.page_allocator.free(path_z);
@@ -32,6 +40,9 @@ pub const Database = struct {
         return .{ .handle = handle };
     }
 
+    /// Releases the database handle.
+    ///
+    /// No further operations may be performed on this value after `deinit`.
     pub fn deinit(self: *Database) void {
         if (self.handle) |handle| {
             c.turso_database_deinit(handle);
@@ -39,6 +50,10 @@ pub const Database = struct {
         }
     }
 
+    /// Creates a new connection to the database.
+    ///
+    /// The returned connection must be used exclusively and cleaned up with
+    /// `Connection.deinit`.
     pub fn connect(self: *Database) Error!Connection {
         const handle = self.handle orelse return error.Misuse;
         var connection: ?*c.turso_connection_t = null;

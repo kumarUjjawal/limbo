@@ -1,5 +1,10 @@
+//! Error types and status-code helpers for the Zig binding.
+//!
+//! These helpers translate the shared C ABI status model into Zig errors while
+//! preserving the same broad error categories used by the other bindings.
 const c = @import("c.zig").bindings;
 
+/// Error values returned by the Zig binding.
 pub const Error = error{
     Busy,
     Interrupt,
@@ -16,6 +21,7 @@ pub const Error = error{
     NegativeValue,
 };
 
+/// Converts a status code that is expected to be `TURSO_OK` into a Zig error.
 pub fn checkOk(status: c.turso_status_code_t, error_message: [*c]const u8) Error!void {
     switch (status) {
         c.TURSO_OK => freeErrorMessage(error_message),
@@ -23,6 +29,7 @@ pub fn checkOk(status: c.turso_status_code_t, error_message: [*c]const u8) Error
     }
 }
 
+/// Converts a synchronous status code into a Zig error.
 pub fn checkStatusCode(status: c.turso_status_code_t) Error!void {
     switch (status) {
         c.TURSO_OK => {},
@@ -43,6 +50,7 @@ pub fn checkStatusCode(status: c.turso_status_code_t) Error!void {
     }
 }
 
+/// Maps a C ABI status and optional message into the corresponding Zig error.
 pub fn statusToError(status: c.turso_status_code_t, error_message: [*c]const u8) Error {
     defer freeErrorMessage(error_message);
     return switch (status) {
@@ -61,6 +69,7 @@ pub fn statusToError(status: c.turso_status_code_t, error_message: [*c]const u8)
     };
 }
 
+/// Releases an error string allocated by the shared SDK.
 pub fn freeErrorMessage(error_message: [*c]const u8) void {
     if (error_message != null) {
         c.turso_str_deinit(error_message);
