@@ -21,24 +21,19 @@ pub fn main() !void {
             var value = try stmt.readValueAlloc(std.heap.page_allocator, column_index);
             defer value.deinit(std.heap.page_allocator);
 
-            try stdout.print("column {d}: ", .{column_index});
-            try writeValue(stdout, value);
-            try stdout.print("\n", .{});
-        }
-    }
-}
-
-fn writeValue(writer: anytype, value: turso.Value) !void {
-    switch (value) {
-        .null => try writer.print("NULL", .{}),
-        .integer => |v| try writer.print("integer {d}", .{v}),
-        .real => |v| try writer.print("real {d}", .{v}),
-        .text => |v| try writer.print("text {s}", .{v}),
-        .blob => |v| {
-            try writer.print("blob ", .{});
-            for (v) |byte| {
-                try writer.print("{x:0>2}", .{byte});
+            switch (value) {
+                .null => try stdout.print("column {d}: NULL\n", .{column_index}),
+                .integer => |v| try stdout.print("column {d}: integer {d}\n", .{ column_index, v }),
+                .real => |v| try stdout.print("column {d}: real {d}\n", .{ column_index, v }),
+                .text => |v| try stdout.print("column {d}: text {s}\n", .{ column_index, v }),
+                .blob => |v| {
+                    try stdout.print("column {d}: blob ", .{column_index});
+                    for (v) |byte| {
+                        try stdout.print("{x:0>2}", .{byte});
+                    }
+                    try stdout.print("\n", .{});
+                },
             }
-        },
+        }
     }
 }

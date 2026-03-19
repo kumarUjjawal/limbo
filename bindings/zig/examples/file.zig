@@ -33,11 +33,7 @@ pub fn main() !void {
         var title = try stmt.readValueAlloc(std.heap.page_allocator, 1);
         defer title.deinit(std.heap.page_allocator);
 
-        try stdout.print("latest post: ", .{});
-        try writeValue(stdout, id);
-        try stdout.print(", ", .{});
-        try writeValue(stdout, title);
-        try stdout.print("\n", .{});
+        try stdout.print("latest post: {f}, {f}\n", .{ id, title });
     }
 }
 
@@ -46,18 +42,4 @@ fn cleanupFile(path: []const u8) void {
         error.FileNotFound => {},
         else => {},
     };
-}
-
-fn writeValue(writer: anytype, value: turso.Value) !void {
-    switch (value) {
-        .null => try writer.print("NULL", .{}),
-        .integer => |v| try writer.print("{d}", .{v}),
-        .real => |v| try writer.print("{d}", .{v}),
-        .text => |v| try writer.print("{s}", .{v}),
-        .blob => |v| {
-            for (v) |byte| {
-                try writer.print("{x:0>2}", .{byte});
-            }
-        },
-    }
 }

@@ -25,24 +25,6 @@ pub fn main() !void {
         var name = try stmt.readValueAlloc(std.heap.page_allocator, 1);
         defer name.deinit(std.heap.page_allocator);
 
-        try stdout.print("row: ", .{});
-        try writeValue(stdout, id);
-        try stdout.print(", ", .{});
-        try writeValue(stdout, name);
-        try stdout.print("\n", .{});
-    }
-}
-
-fn writeValue(writer: anytype, value: turso.Value) !void {
-    switch (value) {
-        .null => try writer.print("NULL", .{}),
-        .integer => |v| try writer.print("{d}", .{v}),
-        .real => |v| try writer.print("{d}", .{v}),
-        .text => |v| try writer.print("{s}", .{v}),
-        .blob => |v| {
-            for (v) |byte| {
-                try writer.print("{x:0>2}", .{byte});
-            }
-        },
+        try stdout.print("row: {f}, {f}\n", .{ id, name });
     }
 }

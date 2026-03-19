@@ -23,4 +23,22 @@ pub const Value = union(enum) {
         }
         self.* = .null;
     }
+
+    /// Formats the value for use with `std.fmt` (e.g. `std.debug.print("{f}", .{v})`).
+    ///
+    /// Integers and reals are printed in decimal, text as a UTF-8 string,
+    /// blobs as lower-case hex pairs, and null as `NULL`.
+    pub fn format(self: Value, writer: anytype) !void {
+        switch (self) {
+            .null => try writer.writeAll("NULL"),
+            .integer => |v| try writer.print("{d}", .{v}),
+            .real => |v| try writer.print("{d}", .{v}),
+            .text => |v| try writer.writeAll(v),
+            .blob => |v| {
+                for (v) |byte| {
+                    try writer.print("{x:0>2}", .{byte});
+                }
+            },
+        }
+    }
 };

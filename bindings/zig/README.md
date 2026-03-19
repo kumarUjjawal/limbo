@@ -41,8 +41,6 @@ The package entry point is `src/root.zig`. The `src/main.zig` file is only a run
 
 ### Consumer Path: Prebuilt SDK
 
-The preferred consumer path matches the other non-Rust bindings: keep the database engine in Rust, provide the shared SDK artifact separately, and let Zig wrap the `turso.h` C ABI.
-
 A prebuilt SDK prefix should look like this:
 
 ```text

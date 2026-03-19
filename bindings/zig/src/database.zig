@@ -18,8 +18,8 @@ pub const Database = struct {
     ///
     /// Use `:memory:` to create an in-memory database.
     pub fn open(path: []const u8) (Allocator.Error || Error)!Database {
-        const path_z = try std.heap.page_allocator.dupeZ(u8, path);
-        defer std.heap.page_allocator.free(path_z);
+        const path_z = try std.heap.c_allocator.dupeZ(u8, path);
+        defer std.heap.c_allocator.free(path_z);
 
         var handle: ?*const c.turso_database_t = null;
         var error_message: [*c]const u8 = null;
