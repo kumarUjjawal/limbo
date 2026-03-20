@@ -2,6 +2,7 @@ const std = @import("std");
 
 const SdkInputs = struct {
     include_dir: std.Build.LazyPath,
+    sync_include_dir: std.Build.LazyPath,
     static_lib: std.Build.LazyPath,
     build_step: ?*std.Build.Step,
 };
@@ -18,10 +19,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    configureModule(mod, sdk.include_dir, sdk.static_lib, target.result.os.tag);
+    configureModule(mod, sdk.include_dir, sdk.sync_include_dir, sdk.static_lib, target.result.os.tag);
 
     if (sdk.build_step) |sdk_build_step| {
-        const sdk_step = b.step("sdk", "Build the shared Turso SDK archive with Cargo");
+        const sdk_step = b.step("sdk", "Build the shared Turso sync SDK archive with Cargo");
         sdk_step.dependOn(sdk_build_step);
     }
 
@@ -75,10 +76,12 @@ pub fn build(b: *std.Build) void {
 fn configureModule(
     module: *std.Build.Module,
     sdk_include_dir: std.Build.LazyPath,
+    sync_sdk_include_dir: std.Build.LazyPath,
     static_lib: std.Build.LazyPath,
     os_tag: std.Target.Os.Tag,
 ) void {
     module.addIncludePath(sdk_include_dir);
+    module.addIncludePath(sync_sdk_include_dir);
     module.addObjectFile(static_lib);
     module.linkSystemLibrary("c", .{});
 
@@ -149,12 +152,12 @@ fn resolveSdkInputs(
     const sdk_lib_path_opt = b.option(
         []const u8,
         "turso-sdk-lib-path",
-        "Path to a prebuilt turso_sdk_kit static library",
+        "Path to a prebuilt turso_sync_sdk_kit static library",
     );
     const sdk_use_cargo = b.option(
         bool,
         "turso-sdk-use-cargo",
-        "Build turso_sdk_kit with Cargo as an explicit repository-development fallback",
+        "Build turso_sync_sdk_kit with Cargo as an explicit repository-development fallback",
     ) orelse false;
     const sdk_cargo_target_dir_opt = b.option(
         []const u8,
@@ -171,29 +174,34 @@ fn resolveSdkInputs(
         b.pathJoin(&.{ prefix, "include" })
     else
         null;
-    const sdk_lib_path = sdk_lib_path_opt orelse if (sdk_prefix) |prefix|
-        b.pathJoin(&.{ prefix, "lib", staticLibraryName(os_tag) })
+    const sdk_sync_lib_path = if (sdk_lib_path_opt) |sdk_lib_path|
+        resolveSyncStaticLibraryPath(b, sdk_lib_path, os_tag)
+    else if (sdk_prefix) |prefix|
+        b.pathJoin(&.{ prefix, "lib", syncStaticLibraryName(os_tag) })
     else
         null;
 
-    if (sdk_include_dir != null or sdk_lib_path != null) {
-        if (sdk_include_dir == null or sdk_lib_path == null) {
+    if (sdk_include_dir != null or sdk_sync_lib_path != null) {
+        if (sdk_include_dir == null or sdk_sync_lib_path == null) {
             failBuild(
-                \\error: prebuilt Turso SDK configuration is incomplete
+                \\error: prebuilt Turso sync SDK configuration is incomplete
                 \\provide both an include directory and a static library path
                 \\examples:
                 \\  zig build -Dturso-sdk-prefix=/path/to/turso-sdk
-                \\  zig build -Dturso-sdk-include-dir=/path/to/include -Dturso-sdk-lib-path=/path/to/libturso_sdk_kit.a
+                \\  zig build -Dturso-sdk-include-dir=/path/to/include -Dturso-sdk-lib-path=/path/to/libturso_sync_sdk_kit.a
                 \\
             , .{});
         }
 
         ensurePathExists(sdk_include_dir.?, "Turso SDK include directory");
-        ensurePathExists(sdk_lib_path.?, "Turso SDK static library");
+        ensurePathExists(b.pathJoin(&.{ sdk_include_dir.?, "turso.h" }), "Turso SDK header");
+        ensurePathExists(b.pathJoin(&.{ sdk_include_dir.?, "turso_sync.h" }), "Turso sync SDK header");
+        ensurePathExists(sdk_sync_lib_path.?, "Turso sync SDK static library");
 
         return .{
             .include_dir = .{ .cwd_relative = sdk_include_dir.? },
-            .static_lib = .{ .cwd_relative = sdk_lib_path.? },
+            .sync_include_dir = .{ .cwd_relative = sdk_include_dir.? },
+            .static_lib = .{ .cwd_relative = sdk_sync_lib_path.? },
             .build_step = null,
         };
     }
@@ -201,10 +209,10 @@ fn resolveSdkInputs(
     if (!sdk_use_cargo) {
         failBuild(
             \\error: no Turso SDK input was provided
-            \\published builds require a matching Turso SDK prefix or explicit include/lib paths
+            \\published builds require a matching Turso sync SDK prefix or explicit include/lib paths
             \\examples:
             \\  zig build -Dturso-sdk-prefix=/path/to/turso-sdk
-            \\  zig build -Dturso-sdk-include-dir=/path/to/include -Dturso-sdk-lib-path=/path/to/libturso_sdk_kit.a
+            \\  zig build -Dturso-sdk-include-dir=/path/to/include -Dturso-sdk-lib-path=/path/to/libturso_sync_sdk_kit.a
             \\for repository development only, opt into the Cargo fallback explicitly:
             \\  zig build -Dturso-sdk-use-cargo=true
             \\  zig build -Dturso-sdk-use-cargo=true -Dturso-sdk-repo-root=/path/to/limbo
@@ -228,14 +236,18 @@ fn resolveSdkInputs(
     const sdk_include_dir_fallback: std.Build.LazyPath = .{
         .cwd_relative = b.pathJoin(&.{ repo_root, "sdk-kit" }),
     };
+    const sync_sdk_include_dir_fallback: std.Build.LazyPath = .{
+        .cwd_relative = b.pathJoin(&.{ repo_root, "sync", "sdk-kit" }),
+    };
     const cargo_target_dir = sdk_cargo_target_dir_opt orelse detectCargoTargetDir(b, repo_root);
-    const static_lib_path = b.pathJoin(&.{ cargo_target_dir, "debug", staticLibraryName(os_tag) });
+    const static_lib_path = b.pathJoin(&.{ cargo_target_dir, "debug", syncStaticLibraryName(os_tag) });
 
-    const cargo_build = b.addSystemCommand(&.{ "cargo", "build", "--locked", "-p", "turso_sdk_kit" });
+    const cargo_build = b.addSystemCommand(&.{ "cargo", "build", "--locked", "-p", "turso_sync_sdk_kit" });
     cargo_build.setCwd(.{ .cwd_relative = repo_root });
 
     return .{
         .include_dir = sdk_include_dir_fallback,
+        .sync_include_dir = sync_sdk_include_dir_fallback,
         .static_lib = .{ .cwd_relative = static_lib_path },
         .build_step = &cargo_build.step,
     };
@@ -272,11 +284,29 @@ fn ensureNativeTarget(b: *std.Build, target: std.Build.ResolvedTarget) void {
     std.process.exit(1);
 }
 
-fn staticLibraryName(os_tag: std.Target.Os.Tag) []const u8 {
+fn syncStaticLibraryName(os_tag: std.Target.Os.Tag) []const u8 {
     return switch (os_tag) {
-        .windows => "turso_sdk_kit.lib",
-        else => "libturso_sdk_kit.a",
+        .windows => "turso_sync_sdk_kit.lib",
+        else => "libturso_sync_sdk_kit.a",
     };
+}
+
+fn resolveSyncStaticLibraryPath(
+    b: *std.Build,
+    lib_path: []const u8,
+    os_tag: std.Target.Os.Tag,
+) []const u8 {
+    const sync_name = syncStaticLibraryName(os_tag);
+    const lib_basename = std.fs.path.basename(lib_path);
+
+    if (std.mem.eql(u8, lib_basename, sync_name)) {
+        return lib_path;
+    }
+
+    const parent = std.fs.path.dirname(lib_path) orelse {
+        return sync_name;
+    };
+    return b.pathJoin(&.{ parent, sync_name });
 }
 
 fn detectRepoRoot(b: *std.Build) ?[]const u8 {

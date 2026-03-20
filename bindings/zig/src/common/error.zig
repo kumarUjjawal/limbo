@@ -20,6 +20,7 @@ pub const Error = error{
     QueryReturnedNoRows,
     UnexpectedStatus,
     NegativeValue,
+    SyncIoHandlerRequired,
 };
 
 /// Converts a status code that is expected to be `TURSO_OK` into a Zig error.

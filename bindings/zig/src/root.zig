@@ -78,9 +78,11 @@
 //!
 //! ## Current Limitations
 //!
-//! The current Zig binding is local-only and blocking-only. Handles must be
-//! cleaned up explicitly with `deinit`, and text/blob row values are copied
-//! into owned Zig memory before being returned to user code.
+//! The primary local API is blocking. Embedded-replica sync is available
+//! through the low-level `turso.sync` namespace, which exposes operations and
+//! IO queue driving directly. Handles must be cleaned up explicitly with
+//! `deinit`, and text/blob row values are copied into owned Zig memory before
+//! being returned to user code.
 const std = @import("std");
 const c = @import("c.zig").bindings;
 const options = @import("common/options.zig");
@@ -116,6 +118,8 @@ pub const SetupOptions = setup_api.SetupOptions;
 pub const Statement = @import("local/statement.zig").Statement;
 /// Result of stepping a prepared statement once.
 pub const StepResult = @import("local/statement.zig").StepResult;
+/// Low-level embedded-replica sync APIs.
+pub const sync = @import("sync/root.zig");
 /// A transaction borrowing a connection handle.
 pub const Transaction = @import("local/transaction.zig").Transaction;
 /// Transaction begin mode.

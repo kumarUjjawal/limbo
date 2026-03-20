@@ -2,6 +2,13 @@ const turso = @import("turso");
 
 test {
     _ = @import("root_api.zig");
+    _ = @import("database.zig");
+    _ = @import("connection.zig");
+    _ = @import("statement.zig");
+    _ = @import("transaction.zig");
+    _ = @import("row.zig");
+    _ = @import("value.zig");
+    _ = @import("sync.zig");
     _ = turso.Database;
     _ = turso.DatabaseOptions;
     _ = turso.Connection;
@@ -18,4 +25,5 @@ test {
     _ = turso.Value;
     _ = turso.Error;
     _ = turso.setup;
+    _ = turso.sync;
 }

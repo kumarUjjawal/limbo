@@ -148,35 +148,35 @@ fn buildExperimentalFeatures(
         return null;
     }
 
-    var buffer = std.ArrayList(u8).init(allocator);
-    errdefer buffer.deinit();
+    var buffer = std.ArrayList(u8).empty;
+    errdefer buffer.deinit(allocator);
 
     var wrote_any = false;
     var has_encryption = false;
 
     for (options.experimental) |feature| {
         if (wrote_any) {
-            try buffer.append(',');
+            try buffer.append(allocator, ',');
         }
-        try buffer.appendSlice(feature.name());
+        try buffer.appendSlice(allocator, feature.name());
         wrote_any = true;
         has_encryption = has_encryption or feature == .encryption;
     }
 
     if (options.encryption != null and !has_encryption) {
         if (wrote_any) {
-            try buffer.append(',');
+            try buffer.append(allocator, ',');
         }
-        try buffer.appendSlice(ExperimentalFeature.encryption.name());
+        try buffer.appendSlice(allocator, ExperimentalFeature.encryption.name());
         wrote_any = true;
     }
 
     if (!wrote_any) {
-        buffer.deinit();
+        buffer.deinit(allocator);
         return null;
     }
 
-    return try buffer.toOwnedSliceSentinel(0);
+    return try buffer.toOwnedSliceSentinel(allocator, 0);
 }
 
 test "database options add encryption feature automatically" {

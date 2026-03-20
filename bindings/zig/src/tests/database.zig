@@ -120,7 +120,7 @@ test "database open options support attach" {
     _ = try primary_conn.exec(attach_sql);
 
     var stmt = try primary_conn.prepare(
-        "SELECT x FROM t UNION ALL SELECT x FROM secondary.q ORDER BY x",
+        "SELECT * FROM t UNION ALL SELECT * FROM secondary.q",
     );
     defer stmt.deinit();
 
@@ -201,5 +201,5 @@ test "database open options support encryption" {
         },
     }));
 
-    try std.testing.expectError(turso.Error.Database, turso.Database.open(db_path));
+    try std.testing.expectError(turso.Error.NotADatabase, turso.Database.open(db_path));
 }
