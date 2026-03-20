@@ -183,6 +183,33 @@ test "statement exposes parameter and column metadata" {
     try std.testing.expect((try metadata.columnDeclTypeAlloc(std.testing.allocator, 2)) == null);
 }
 
+test "statement exposes column list convenience helpers" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.execute("CREATE TABLE t (id INTEGER, name TEXT)");
+
+    var stmt = try fixture.conn.prepare("SELECT id, name, 1 AS computed FROM t");
+    defer stmt.deinit();
+
+    const column_names = try stmt.columnNamesAlloc(std.testing.allocator);
+    defer freeNameList(std.testing.allocator, column_names);
+    try std.testing.expectEqual(@as(usize, 3), column_names.len);
+    try std.testing.expectEqualStrings("id", column_names[0]);
+    try std.testing.expectEqualStrings("name", column_names[1]);
+    try std.testing.expectEqualStrings("computed", column_names[2]);
+
+    const columns = try stmt.columnsAlloc(std.testing.allocator);
+    defer freeColumns(std.testing.allocator, columns);
+    try std.testing.expectEqual(@as(usize, 3), columns.len);
+    try std.testing.expectEqualStrings("id", columns[0].name);
+    try std.testing.expectEqualStrings("INTEGER", columns[0].decl_type.?);
+    try std.testing.expectEqualStrings("name", columns[1].name);
+    try std.testing.expectEqualStrings("TEXT", columns[1].decl_type.?);
+    try std.testing.expectEqualStrings("computed", columns[2].name);
+    try std.testing.expect(columns[2].decl_type == null);
+}
+
 test "statement bindNamed rejects missing and invalid names" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
@@ -292,6 +319,20 @@ test "statement typed read helpers reject mismatched types" {
     try std.testing.expectError(error.Misuse, stmt.readFloat(0));
     try std.testing.expectError(error.Misuse, stmt.readBlobAlloc(std.testing.allocator, 1));
     try std.testing.expectError(error.Misuse, stmt.readIntByName("txt"));
+}
+
+fn freeNameList(allocator: std.mem.Allocator, names: [][]u8) void {
+    for (names) |name| {
+        allocator.free(name);
+    }
+    allocator.free(names);
+}
+
+fn freeColumns(allocator: std.mem.Allocator, columns: []turso.Column) void {
+    for (columns) |*column| {
+        column.deinit(allocator);
+    }
+    allocator.free(columns);
 }
 
 test "statement queryRow returns first row and drains remaining rows" {

@@ -8,6 +8,7 @@ test {
     _ = @import("statement.zig");
     _ = @import("transaction.zig");
     _ = @import("row.zig");
+    _ = @import("rows.zig");
     _ = @import("value.zig");
     _ = @import("sync.zig");
     _ = turso.Database;
@@ -24,6 +25,7 @@ test {
     _ = turso.LogLevel;
     _ = turso.Logger;
     _ = turso.TransactionDropBehavior;
+    _ = turso.Column;
     _ = turso.Row;
     _ = turso.Rows;
     _ = turso.RunResult;

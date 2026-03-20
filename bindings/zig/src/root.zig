@@ -144,6 +144,8 @@ pub const TransactionBehavior = @import("local/transaction.zig").Behavior;
 pub const TransactionDropBehavior = @import("local/transaction.zig").DropBehavior;
 /// A single owned query result row.
 pub const Row = @import("common/row.zig").Row;
+/// Owned result-column metadata.
+pub const Column = @import("common/column.zig").Column;
 /// An owned list of query result rows.
 pub const Rows = @import("common/rows.zig").Rows;
 /// Result metadata returned by `run` helpers.

@@ -5,6 +5,7 @@
 const std = @import("std");
 const c = @import("../c.zig").bindings;
 const bind_params = @import("../common/bind_params.zig");
+const Column = @import("../common/column.zig").Column;
 const errors = @import("../common/error.zig");
 const IoDriver = @import("../common/io_driver.zig").IoDriver;
 const Row = @import("../common/row.zig").Row;
@@ -146,6 +147,27 @@ pub const Statement = struct {
         return errors.fail(error.Misuse);
     }
 
+    /// Returns copied column names for the current result set.
+    pub fn columnNamesAlloc(self: *Statement, allocator: Allocator) (Allocator.Error || Error)![][]u8 {
+        const count = try self.columnCount();
+        var names = try allocator.alloc([]u8, count);
+        errdefer allocator.free(names);
+
+        var initialized: usize = 0;
+        errdefer {
+            while (initialized > 0) {
+                initialized -= 1;
+                allocator.free(names[initialized]);
+            }
+        }
+
+        for (0..count) |index| {
+            names[index] = try self.columnNameAlloc(allocator, index);
+            initialized += 1;
+        }
+        return names;
+    }
+
     /// Returns a copy of the declared type at `index`, if available.
     ///
     /// For computed expressions or result columns without a declared type, this
@@ -162,6 +184,30 @@ pub const Statement = struct {
         }
         defer c.turso_str_deinit(decltype_ptr);
         return try allocator.dupe(u8, std.mem.span(decltype_ptr));
+    }
+
+    /// Returns owned column metadata for the current result set.
+    pub fn columnsAlloc(self: *Statement, allocator: Allocator) (Allocator.Error || Error)![]Column {
+        const count = try self.columnCount();
+        var columns = try allocator.alloc(Column, count);
+        errdefer allocator.free(columns);
+
+        var initialized: usize = 0;
+        errdefer {
+            while (initialized > 0) {
+                initialized -= 1;
+                columns[initialized].deinit(allocator);
+            }
+        }
+
+        for (0..count) |index| {
+            columns[index] = .{
+                .name = try self.columnNameAlloc(allocator, index),
+                .decl_type = try self.columnDeclTypeAlloc(allocator, index),
+            };
+            initialized += 1;
+        }
+        return columns;
     }
 
     /// Returns the number of parameters in the prepared statement.
@@ -473,6 +519,14 @@ pub const Statement = struct {
     /// The statement uses its current bindings and is left stepped to
     /// completion.
     pub fn all(self: *Statement, allocator: Allocator) (Allocator.Error || Error)!Rows {
+        const metadata = try self.columnsAlloc(allocator);
+        errdefer {
+            for (metadata) |*column| {
+                column.deinit(allocator);
+            }
+            allocator.free(metadata);
+        }
+
         var rows = std.ArrayList(Row).empty;
         errdefer {
             for (rows.items) |*row| {
@@ -489,7 +543,10 @@ pub const Statement = struct {
             };
         }
 
-        return .{ .items = try rows.toOwnedSlice(allocator) };
+        return .{
+            .metadata = metadata,
+            .items = try rows.toOwnedSlice(allocator),
+        };
     }
 
     /// Resets the statement, applies `params`, and returns every row as owned data.
