@@ -1,7 +1,6 @@
 //! Global setup helpers shared by the Zig binding.
 //!
-//! This mirrors the global `setup(...)` entrypoint used by the React Native
-//! binding while keeping the callback surface Zig-friendly.
+//! This exposes process-wide setup such as log filtering and log callbacks.
 const std = @import("std");
 const c = @import("../c.zig").bindings;
 const errors = @import("error.zig");

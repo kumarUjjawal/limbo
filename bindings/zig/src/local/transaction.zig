@@ -78,7 +78,7 @@ pub const Transaction = struct {
     }
 
     /// Executes a single SQL statement inside the transaction.
-    pub fn exec(self: *Transaction, sql: []const u8) (Allocator.Error || Error)!u64 {
+    pub fn execute(self: *Transaction, sql: []const u8) (Allocator.Error || Error)!u64 {
         const handle = try self.ensureOpenHandle();
         return execOnHandle(handle, self.io_driver, sql);
     }
@@ -87,7 +87,7 @@ pub const Transaction = struct {
     ///
     /// For statements that return rows, use `queryRowWith`, `getWith`, `allWith`,
     /// or explicit statement stepping instead.
-    pub fn execWith(self: *Transaction, sql: []const u8, params: BindParams) (Allocator.Error || Error)!u64 {
+    pub fn executeWith(self: *Transaction, sql: []const u8, params: BindParams) (Allocator.Error || Error)!u64 {
         const handle = try self.ensureOpenHandle();
         var stmt = try prepareSingleOnHandle(handle, self.io_driver, sql);
         defer stmt.deinit();
@@ -115,7 +115,7 @@ pub const Transaction = struct {
     }
 
     /// Executes every statement found in `sql` inside the transaction.
-    pub fn execBatch(self: *Transaction, sql: []const u8) (Allocator.Error || Error)!void {
+    pub fn executeBatch(self: *Transaction, sql: []const u8) (Allocator.Error || Error)!void {
         const handle = try self.ensureOpenHandle();
         var remaining: []const u8 = sql;
         while (try prepareFirstOnHandle(handle, self.io_driver, remaining)) |result| {
@@ -176,6 +176,23 @@ pub const Transaction = struct {
     }
 
     /// Returns every row from `sql` inside the transaction as owned data.
+    ///
+    /// This eagerly collects the full result set into owned Zig memory.
+    pub fn query(self: *Transaction, allocator: Allocator, sql: []const u8) (Allocator.Error || Error)!Rows {
+        return self.all(allocator, sql);
+    }
+
+    /// Returns every row from `sql` inside the transaction after applying `params`.
+    pub fn queryWith(
+        self: *Transaction,
+        allocator: Allocator,
+        sql: []const u8,
+        params: BindParams,
+    ) (Allocator.Error || Error)!Rows {
+        return self.allWith(allocator, sql, params);
+    }
+
+    /// Returns every row from `sql` inside the transaction as owned data.
     pub fn all(self: *Transaction, allocator: Allocator, sql: []const u8) (Allocator.Error || Error)!Rows {
         const handle = try self.ensureOpenHandle();
         var stmt = try prepareSingleOnHandle(handle, self.io_driver, sql);
@@ -222,18 +239,18 @@ pub const Transaction = struct {
 
     fn ensureOpenHandle(self: *Transaction) Error!*c.turso_connection_t {
         if (!self.open) {
-            return error.Misuse;
+            return errors.fail(error.Misuse);
         }
 
         const handle = self.connection_handle.* orelse {
             self.pending_action.* = .none;
             self.open = false;
-            return error.Misuse;
+            return errors.fail(error.Misuse);
         };
         if (c.turso_connection_get_autocommit(handle)) {
             self.pending_action.* = .none;
             self.open = false;
-            return error.Misuse;
+            return errors.fail(error.Misuse);
         }
         return handle;
     }
@@ -290,7 +307,7 @@ fn prepareFirstOnHandle(
             .io_driver = io_driver,
         };
         prepared.deinit();
-        return error.UnexpectedStatus;
+        return errors.fail(error.UnexpectedStatus);
     }
 
     return .{

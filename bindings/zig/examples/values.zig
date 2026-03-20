@@ -8,8 +8,8 @@ pub fn main() !void {
     var conn = try db.connect();
     defer conn.deinit();
 
-    _ = try conn.exec("CREATE TABLE values_demo (i INTEGER, r REAL, t TEXT, b BLOB, n TEXT)");
-    _ = try conn.exec("INSERT INTO values_demo VALUES (42, 3.25, 'hello', x'0102ff', NULL)");
+    _ = try conn.execute("CREATE TABLE values_demo (i INTEGER, r REAL, t TEXT, b BLOB, n TEXT)");
+    _ = try conn.execute("INSERT INTO values_demo VALUES (42, 3.25, 'hello', x'0102ff', NULL)");
 
     var stmt = try conn.prepare("SELECT i, r, t, b, n FROM values_demo");
     defer stmt.deinit();

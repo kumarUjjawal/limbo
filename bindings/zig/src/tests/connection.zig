@@ -2,14 +2,14 @@ const std = @import("std");
 const turso = @import("turso");
 const support = @import("support.zig");
 
-test "connection exec returns rows changed" {
+test "connection execute returns rows changed" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    const create_count = try fixture.conn.exec("CREATE TABLE t (x INTEGER)");
+    const create_count = try fixture.conn.execute("CREATE TABLE t (x INTEGER)");
     try std.testing.expectEqual(@as(u64, 0), create_count);
 
-    const insert_count = try fixture.conn.exec("INSERT INTO t VALUES (1)");
+    const insert_count = try fixture.conn.execute("INSERT INTO t VALUES (1)");
     try std.testing.expectEqual(@as(u64, 1), insert_count);
 }
 
@@ -21,18 +21,18 @@ test "connection helpers expose autocommit and last insert row id" {
     try std.testing.expect(try fixture.conn.isAutocommit());
     try std.testing.expectEqual(@as(i64, 0), try fixture.conn.lastInsertRowId());
 
-    _ = try fixture.conn.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
+    _ = try fixture.conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
 
-    _ = try fixture.conn.exec("BEGIN");
+    _ = try fixture.conn.execute("BEGIN");
     try std.testing.expect(!(try fixture.conn.isAutocommit()));
 
-    _ = try fixture.conn.exec("COMMIT");
+    _ = try fixture.conn.execute("COMMIT");
     try std.testing.expect(try fixture.conn.isAutocommit());
 
-    _ = try fixture.conn.exec("INSERT INTO t (name) VALUES ('alice')");
+    _ = try fixture.conn.execute("INSERT INTO t (name) VALUES ('alice')");
     try std.testing.expectEqual(@as(i64, 1), try fixture.conn.lastInsertRowId());
 
-    _ = try fixture.conn.exec("INSERT INTO t (name) VALUES ('bob')");
+    _ = try fixture.conn.execute("INSERT INTO t (name) VALUES ('bob')");
     try std.testing.expectEqual(@as(i64, 2), try fixture.conn.lastInsertRowId());
 }
 
@@ -78,11 +78,11 @@ test "connection prepareFirst walks multiple statements" {
     try std.testing.expect((try fixture.conn.prepareFirst("   \n\t")) == null);
 }
 
-test "connection exec surfaces SQL errors" {
+test "connection execute surfaces SQL errors" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    const result = fixture.conn.exec("NOT VALID SQL !@#");
+    const result = fixture.conn.execute("NOT VALID SQL !@#");
     try std.testing.expectError(error.Database, result);
 }
 
@@ -90,8 +90,8 @@ test "connection queryRow returns owned row" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER, name TEXT)");
-    _ = try fixture.conn.exec("INSERT INTO users VALUES (1, 'alice')");
+    _ = try fixture.conn.execute("CREATE TABLE users (id INTEGER, name TEXT)");
+    _ = try fixture.conn.execute("INSERT INTO users VALUES (1, 'alice')");
 
     var row = try fixture.conn.queryRow(std.testing.allocator, "SELECT id, name FROM users");
     defer row.deinit(std.testing.allocator);
@@ -104,11 +104,11 @@ test "connection queryRow returns owned row" {
     });
 }
 
-test "connection execBatch executes multi-statement SQL and ignores trailing whitespace" {
+test "connection executeBatch executes multi-statement SQL and ignores trailing whitespace" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    try fixture.conn.execBatch(
+    try fixture.conn.executeBatch(
         \\CREATE TABLE t (x INTEGER);
         \\INSERT INTO t VALUES (1);
         \\INSERT INTO t VALUES (2);
@@ -129,11 +129,11 @@ test "connection execBatch executes multi-statement SQL and ignores trailing whi
     });
 }
 
-test "connection execBatch drains row-producing statements and continues" {
+test "connection executeBatch drains row-producing statements and continues" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    try fixture.conn.execBatch(
+    try fixture.conn.executeBatch(
         \\CREATE TABLE t (x INTEGER);
         \\INSERT INTO t VALUES (1);
         \\SELECT x FROM t;
@@ -156,11 +156,11 @@ test "connection execBatch drains row-producing statements and continues" {
     });
 }
 
-test "connection run get all and pragma provide convenience helpers" {
+test "connection run get query and pragma provide convenience helpers" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
+    _ = try fixture.conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
 
     const first_insert = try fixture.conn.run("INSERT INTO users (name) VALUES ('alice')");
     try std.testing.expectEqual(@as(u64, 1), first_insert.changes);
@@ -179,7 +179,7 @@ test "connection run get all and pragma provide convenience helpers" {
 
     try std.testing.expect((try fixture.conn.get(std.testing.allocator, "SELECT id FROM users WHERE 0")) == null);
 
-    var rows = try fixture.conn.all(std.testing.allocator, "SELECT id, name FROM users ORDER BY id");
+    var rows = try fixture.conn.query(std.testing.allocator, "SELECT id, name FROM users ORDER BY id");
     defer rows.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 2), rows.len());
     try std.testing.expect(switch ((try (try rows.row(1)).valueByName("id")).*) {
@@ -200,7 +200,7 @@ test "connection runWith getWith and allWith bind parameters" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+    _ = try fixture.conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
 
     const first_insert = try fixture.conn.runWith("INSERT INTO users (name, age) VALUES (?1, ?2)", .{
         .positional = &.{
@@ -234,13 +234,13 @@ test "connection runWith getWith and allWith bind parameters" {
     try std.testing.expectEqual(@as(usize, 2), rows.len());
 }
 
-test "connection execWith and queryRowWith bind parameters" {
+test "connection executeWith and queryWith bind parameters" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+    _ = try fixture.conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
 
-    const first_changes = try fixture.conn.execWith("INSERT INTO users (name, age) VALUES (?1, ?2)", .{
+    const first_changes = try fixture.conn.executeWith("INSERT INTO users (name, age) VALUES (?1, ?2)", .{
         .positional = &.{
             .{ .text = "alice" },
             .{ .integer = 30 },
@@ -248,7 +248,7 @@ test "connection execWith and queryRowWith bind parameters" {
     });
     try std.testing.expectEqual(@as(u64, 1), first_changes);
 
-    const second_changes = try fixture.conn.execWith("INSERT INTO users (name, age) VALUES (:name, :age)", .{
+    const second_changes = try fixture.conn.executeWith("INSERT INTO users (name, age) VALUES (:name, :age)", .{
         .named = &.{
             .{ .name = ":name", .value = .{ .text = "bob" } },
             .{ .name = ":age", .value = .{ .integer = 31 } },
@@ -264,4 +264,10 @@ test "connection execWith and queryRowWith bind parameters" {
         .text => |value| std.mem.eql(u8, value, "alice"),
         else => false,
     });
+
+    var rows = try fixture.conn.queryWith(std.testing.allocator, "SELECT id, name FROM users WHERE age >= ?1 ORDER BY id", .{
+        .positional = &.{.{ .integer = 30 }},
+    });
+    defer rows.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 2), rows.len());
 }

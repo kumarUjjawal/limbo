@@ -16,8 +16,8 @@
 //!     var conn = try db.connect();
 //!     defer conn.deinit();
 //!
-//!     _ = try conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
-//!     _ = try conn.exec("INSERT INTO users (name) VALUES ('alice')");
+//!     _ = try conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
+//!     _ = try conn.execute("INSERT INTO users (name) VALUES ('alice')");
 //! }
 //! ```
 //!
@@ -34,8 +34,8 @@
 //!     var conn = try db.connect();
 //!     defer conn.deinit();
 //!
-//!     _ = try conn.exec("CREATE TABLE users (name TEXT NOT NULL)");
-//!     _ = try conn.exec("INSERT INTO users (name) VALUES ('alice')");
+//!     _ = try conn.execute("CREATE TABLE users (name TEXT NOT NULL)");
+//!     _ = try conn.execute("INSERT INTO users (name) VALUES ('alice')");
 //!
 //!     var stmt = try conn.prepare("SELECT name FROM users");
 //!     defer stmt.deinit();
@@ -50,11 +50,16 @@
 //! Transactions are available through `Connection.transaction` and
 //! `Connection.transactionWithBehavior`.
 //!
-//! Convenience helpers are available through `Connection.run`, `Connection.get`,
-//! `Connection.all`, `Connection.pragma`, and the matching `Transaction` and
-//! `Statement` methods. Parameterized variants are available through
-//! `BindParams`, `Statement.bindParams`, and the `executeWith` /
-//! `queryRowWith` / `runWith` / `getWith` / `allWith` helper family.
+//! Core execution helpers are available through `Connection.execute`,
+//! `Connection.executeWith`, `Connection.query`, `Connection.queryWith`, and
+//! the matching `Transaction` and `Statement` methods. Convenience helpers
+//! remain available through `run`, `get`, `all`, and `pragma`, with matching
+//! `With` variants for parameterized calls. `all` is an alias for eagerly
+//! collecting the full result set.
+//!
+//! When a call fails, `lastErrorDetails` and `lastErrorMessageAlloc` expose
+//! the native status and message captured for the most recent failure on the
+//! current thread.
 //!
 //! Global logging can be configured before opening any database:
 //!
@@ -89,6 +94,7 @@
 //! before being returned to user code.
 const std = @import("std");
 const c = @import("c.zig").bindings;
+const error_api = @import("common/error.zig");
 const options = @import("common/options.zig");
 const setup_api = @import("common/setup.zig");
 
@@ -99,7 +105,9 @@ pub const Database = @import("local/database.zig").Database;
 /// Database options accepted by `Database.openWithOptions`.
 pub const DatabaseOptions = options.DatabaseOptions;
 /// Error values returned by the Zig binding.
-pub const Error = @import("common/error.zig").Error;
+pub const Error = error_api.Error;
+/// Diagnostics captured for the most recent Zig binding failure on the current thread.
+pub const ErrorDetails = error_api.ErrorDetails;
 /// Supported encryption ciphers for local database encryption.
 pub const EncryptionCipher = options.EncryptionCipher;
 /// Encryption configuration for local database encryption.
@@ -149,4 +157,19 @@ pub fn setup(config: SetupOptions) Error!void {
 /// Returns the Turso version string reported by the shared SDK.
 pub fn version() []const u8 {
     return std.mem.span(c.turso_version());
+}
+
+/// Returns diagnostics for the most recent Zig binding failure on the current thread.
+pub fn lastErrorDetails() ?ErrorDetails {
+    return error_api.lastErrorDetails();
+}
+
+/// Returns a copied native error message for the most recent failure, if any.
+pub fn lastErrorMessageAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error!?[]u8 {
+    return error_api.lastErrorMessageAlloc(allocator);
+}
+
+/// Clears the stored thread-local failure diagnostics.
+pub fn clearLastErrorDetails() void {
+    error_api.clearLastErrorDetails();
 }

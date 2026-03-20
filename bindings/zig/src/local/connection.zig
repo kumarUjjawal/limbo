@@ -49,7 +49,7 @@ pub const Connection = struct {
     ///
     /// For statements that return rows, use `prepare` and `Statement.step`
     /// instead so rows can be inspected explicitly.
-    pub fn exec(self: *Connection, sql: []const u8) (Allocator.Error || Error)!u64 {
+    pub fn execute(self: *Connection, sql: []const u8) (Allocator.Error || Error)!u64 {
         try self.resolvePendingTransaction();
         var stmt = try self.prepare(sql);
         defer stmt.deinit();
@@ -60,7 +60,7 @@ pub const Connection = struct {
     ///
     /// For statements that return rows, use `queryRowWith`, `getWith`, `allWith`,
     /// or explicit statement stepping instead.
-    pub fn execWith(self: *Connection, sql: []const u8, params: BindParams) (Allocator.Error || Error)!u64 {
+    pub fn executeWith(self: *Connection, sql: []const u8, params: BindParams) (Allocator.Error || Error)!u64 {
         try self.resolvePendingTransaction();
         var stmt = try self.prepare(sql);
         defer stmt.deinit();
@@ -87,7 +87,7 @@ pub const Connection = struct {
     ///
     /// This is intended for DDL or script-style setup. Statements that produce
     /// rows are still executed to completion and their rows are discarded.
-    pub fn execBatch(self: *Connection, sql: []const u8) (Allocator.Error || Error)!void {
+    pub fn executeBatch(self: *Connection, sql: []const u8) (Allocator.Error || Error)!void {
         try self.resolvePendingTransaction();
         var remaining: []const u8 = sql;
         while (try self.prepareFirst(remaining)) |result| {
@@ -104,19 +104,19 @@ pub const Connection = struct {
     ///
     /// Use `0` to disable retries and return `Busy` immediately.
     pub fn busyTimeoutMs(self: *Connection, timeout_ms: u32) Error!void {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         c.turso_connection_set_busy_timeout_ms(handle, @intCast(timeout_ms));
     }
 
     /// Returns whether the connection is currently in autocommit mode.
     pub fn isAutocommit(self: *Connection) Error!bool {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         return c.turso_connection_get_autocommit(handle);
     }
 
     /// Returns the rowid of the last inserted row on this connection.
     pub fn lastInsertRowId(self: *Connection) Error!i64 {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         return c.turso_connection_last_insert_rowid(handle);
     }
 
@@ -159,6 +159,23 @@ pub const Connection = struct {
     }
 
     /// Returns every row from `sql` as owned data.
+    ///
+    /// This eagerly collects the full result set into owned Zig memory.
+    pub fn query(self: *Connection, allocator: Allocator, sql: []const u8) (Allocator.Error || Error)!Rows {
+        return self.all(allocator, sql);
+    }
+
+    /// Returns every row from `sql` after applying `params` as owned data.
+    pub fn queryWith(
+        self: *Connection,
+        allocator: Allocator,
+        sql: []const u8,
+        params: BindParams,
+    ) (Allocator.Error || Error)!Rows {
+        return self.allWith(allocator, sql, params);
+    }
+
+    /// Returns every row from `sql` as owned data.
     pub fn all(self: *Connection, allocator: Allocator, sql: []const u8) (Allocator.Error || Error)!Rows {
         var stmt = try self.prepare(sql);
         defer stmt.deinit();
@@ -198,7 +215,7 @@ pub const Connection = struct {
         behavior: TransactionBehavior,
     ) (Allocator.Error || Error)!Transaction {
         try self.resolvePendingTransaction();
-        _ = try self.exec(behavior.beginSql());
+        _ = try self.execute(behavior.beginSql());
         return .{
             .connection_handle = &self.handle,
             .pending_action = &self.pending_tx_action,
@@ -212,7 +229,7 @@ pub const Connection = struct {
     /// with `Statement.deinit`.
     pub fn prepare(self: *Connection, sql: []const u8) (Allocator.Error || Error)!Statement {
         try self.resolvePendingTransaction();
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         const sql_z = try std.heap.c_allocator.dupeZ(u8, sql);
         defer std.heap.c_allocator.free(sql_z);
 
@@ -235,7 +252,7 @@ pub const Connection = struct {
     /// contains whitespace.
     pub fn prepareFirst(self: *Connection, sql: []const u8) (Allocator.Error || Error)!?PrepareFirstResult {
         try self.resolvePendingTransaction();
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         const sql_z = try std.heap.c_allocator.dupeZ(u8, sql);
         defer std.heap.c_allocator.free(sql_z);
 
@@ -255,7 +272,7 @@ pub const Connection = struct {
                 .io_driver = self.io_driver,
             };
             prepared.deinit();
-            return error.UnexpectedStatus;
+            return errors.fail(error.UnexpectedStatus);
         }
 
         return .{
@@ -272,7 +289,7 @@ pub const Connection = struct {
         switch (self.pending_tx_action) {
             .none => {},
             .rollback => {
-                const handle = self.handle orelse return error.Misuse;
+                const handle = self.handle orelse return errors.fail(error.Misuse);
                 _ = try execRollback(handle, self.io_driver);
                 self.pending_tx_action = .none;
             },

@@ -2,6 +2,7 @@ const turso = @import("turso");
 
 test {
     _ = @import("root_api.zig");
+    _ = @import("error_diagnostics.zig");
     _ = @import("database.zig");
     _ = @import("connection.zig");
     _ = @import("statement.zig");
@@ -28,6 +29,10 @@ test {
     _ = turso.SetupOptions;
     _ = turso.Value;
     _ = turso.Error;
+    _ = turso.ErrorDetails;
     _ = turso.setup;
+    _ = turso.lastErrorDetails;
+    _ = turso.lastErrorMessageAlloc;
+    _ = turso.clearLastErrorDetails;
     _ = turso.sync;
 }

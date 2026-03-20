@@ -8,8 +8,8 @@ pub fn main() !void {
     var conn = try db.connect();
     defer conn.deinit();
 
-    _ = try conn.exec("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
-    _ = try conn.exec("INSERT INTO items (name) VALUES ('zig')");
+    _ = try conn.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
+    _ = try conn.execute("INSERT INTO items (name) VALUES ('zig')");
 
     var stmt = try conn.prepare("SELECT id, name FROM items");
     defer stmt.deinit();

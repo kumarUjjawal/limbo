@@ -6,7 +6,7 @@ test "statement supports bind types and owned reads" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE t (i INTEGER, r REAL, txt TEXT, b BLOB, n TEXT)");
+    _ = try fixture.conn.execute("CREATE TABLE t (i INTEGER, r REAL, txt TEXT, b BLOB, n TEXT)");
 
     var insert = try fixture.conn.prepare("INSERT INTO t VALUES (?1, ?2, ?3, ?4, ?5)");
     defer insert.deinit();
@@ -65,7 +65,7 @@ test "statement bindValue and bindNamed support mixed parameter styles" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE t (i INTEGER, r REAL, txt TEXT, b BLOB, n TEXT)");
+    _ = try fixture.conn.execute("CREATE TABLE t (i INTEGER, r REAL, txt TEXT, b BLOB, n TEXT)");
 
     var insert = try fixture.conn.prepare("INSERT INTO t VALUES (?1, :ratio, @label, $payload, ?5)");
     defer insert.deinit();
@@ -124,7 +124,7 @@ test "statement resets and re-executes" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE t (name TEXT)");
+    _ = try fixture.conn.execute("CREATE TABLE t (name TEXT)");
 
     var stmt = try fixture.conn.prepare("INSERT INTO t (name) VALUES (?1)");
     defer stmt.deinit();
@@ -153,7 +153,7 @@ test "statement exposes parameter and column metadata" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE t (id INTEGER, name TEXT)");
+    _ = try fixture.conn.execute("CREATE TABLE t (id INTEGER, name TEXT)");
 
     var parameters = try fixture.conn.prepare("SELECT :named, ?2, @other");
     defer parameters.deinit();
@@ -198,8 +198,8 @@ test "statement reads empty text and blob values" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE t (a TEXT, b BLOB)");
-    _ = try fixture.conn.exec("INSERT INTO t VALUES ('', x'')");
+    _ = try fixture.conn.execute("CREATE TABLE t (a TEXT, b BLOB)");
+    _ = try fixture.conn.execute("INSERT INTO t VALUES ('', x'')");
 
     var stmt = try fixture.conn.prepare("SELECT a, b FROM t");
     defer stmt.deinit();
@@ -225,8 +225,8 @@ test "statement readValueByNameAlloc and readRowAlloc use column names" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER, name TEXT)");
-    _ = try fixture.conn.exec("INSERT INTO users VALUES (7, 'alice')");
+    _ = try fixture.conn.execute("CREATE TABLE users (id INTEGER, name TEXT)");
+    _ = try fixture.conn.execute("INSERT INTO users VALUES (7, 'alice')");
 
     var stmt = try fixture.conn.prepare("SELECT id, name FROM users");
     defer stmt.deinit();
@@ -250,8 +250,8 @@ test "statement queryRow returns first row and drains remaining rows" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER, name TEXT)");
-    try fixture.conn.execBatch(
+    _ = try fixture.conn.execute("CREATE TABLE users (id INTEGER, name TEXT)");
+    try fixture.conn.executeBatch(
         \\INSERT INTO users VALUES (1, 'alice');
         \\INSERT INTO users VALUES (2, 'bob');
     );
@@ -275,7 +275,7 @@ test "statement queryRow returns QueryReturnedNoRows for empty results" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER)");
+    _ = try fixture.conn.execute("CREATE TABLE users (id INTEGER)");
 
     var stmt = try fixture.conn.prepare("SELECT id FROM users");
     defer stmt.deinit();
@@ -283,11 +283,11 @@ test "statement queryRow returns QueryReturnedNoRows for empty results" {
     try std.testing.expectError(error.QueryReturnedNoRows, stmt.queryRow(std.testing.allocator));
 }
 
-test "statement run get and all provide convenience helpers" {
+test "statement run get and query provide convenience helpers" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+    _ = try fixture.conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
 
     var insert = try fixture.conn.prepare("INSERT INTO users (name) VALUES (?1)");
     defer insert.deinit();
@@ -321,7 +321,7 @@ test "statement run get and all provide convenience helpers" {
     var all_stmt = try fixture.conn.prepare("SELECT id, name FROM users ORDER BY id");
     defer all_stmt.deinit();
 
-    var rows = try all_stmt.all(std.testing.allocator);
+    var rows = try all_stmt.query(std.testing.allocator);
     defer rows.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 2), rows.len());
     try std.testing.expect(switch ((try (try rows.row(1)).valueByName("name")).*) {
@@ -334,7 +334,7 @@ test "statement bindParams runWith getWith and allWith support reusable paramete
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+    _ = try fixture.conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
 
     var insert = try fixture.conn.prepare("INSERT INTO users (name, age) VALUES (?1, :age)");
     defer insert.deinit();
@@ -383,11 +383,11 @@ test "statement bindParams runWith getWith and allWith support reusable paramete
     });
 }
 
-test "statement executeWith and queryRowWith complete parameterized one-shot APIs" {
+test "statement executeWith and queryWith complete parameterized one-shot APIs" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+    _ = try fixture.conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
 
     var insert = try fixture.conn.prepare("INSERT INTO users (name, age) VALUES (:name, :age)");
     defer insert.deinit();
@@ -408,7 +408,7 @@ test "statement executeWith and queryRowWith complete parameterized one-shot API
     });
     try std.testing.expectEqual(@as(u64, 1), second_changes);
 
-    var query = try fixture.conn.prepare("SELECT id, name FROM users WHERE age = ?1");
+    var query = try fixture.conn.prepare("SELECT id, name FROM users WHERE age >= ?1 ORDER BY id");
     defer query.deinit();
 
     var row = try query.queryRowWith(std.testing.allocator, .{
@@ -419,6 +419,12 @@ test "statement executeWith and queryRowWith complete parameterized one-shot API
         .text => |value| std.mem.eql(u8, value, "bob"),
         else => false,
     });
+
+    var rows = try query.queryWith(std.testing.allocator, .{
+        .positional = &.{.{ .integer = 30 }},
+    });
+    defer rows.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 2), rows.len());
 
     try std.testing.expectError(error.QueryReturnedNoRows, query.queryRowWith(std.testing.allocator, .{
         .positional = &.{.{ .integer = 99 }},

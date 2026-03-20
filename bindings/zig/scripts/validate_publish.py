@@ -95,7 +95,7 @@ pub fn main() !void {
     var conn = try db.connect();
     defer conn.deinit();
 
-    try conn.execBatch(
+    try conn.executeBatch(
         \\\\CREATE TABLE publish_smoke (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
         \\\\INSERT INTO publish_smoke (name) VALUES ('smoke');
         \\\\PRAGMA user_version;

@@ -27,9 +27,6 @@ pub const Database = struct {
     }
 
     /// Opens or bootstraps a sync database at `path` with explicit options.
-    ///
-    /// This mirrors the sync lifecycle used by the other bindings while
-    /// keeping the public Zig API blocking and explicit.
     pub fn openWithOptions(
         path: []const u8,
         db_options: DatabaseOptions,

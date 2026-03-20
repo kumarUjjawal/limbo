@@ -6,13 +6,13 @@ test "transaction commit persists changes and restores autocommit" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE t (x INTEGER)");
+    _ = try fixture.conn.execute("CREATE TABLE t (x INTEGER)");
 
     var tx = try fixture.conn.transaction();
     defer tx.deinit();
 
     try std.testing.expect(!(try fixture.conn.isAutocommit()));
-    try tx.execBatch(
+    try tx.executeBatch(
         \\INSERT INTO t VALUES (1);
         \\INSERT INTO t VALUES (2);
     );
@@ -27,7 +27,7 @@ test "transaction prepare and rollback discard changes" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE t (x INTEGER)");
+    _ = try fixture.conn.execute("CREATE TABLE t (x INTEGER)");
 
     var tx = try fixture.conn.transactionWithBehavior(.immediate);
     defer tx.deinit();
@@ -52,13 +52,13 @@ test "transaction deinit rolls back unfinished work" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE t (x INTEGER)");
+    _ = try fixture.conn.execute("CREATE TABLE t (x INTEGER)");
 
     {
         var tx = try fixture.conn.transactionWithBehavior(.exclusive);
         defer tx.deinit();
 
-        _ = try tx.exec("INSERT INTO t VALUES (1)");
+        _ = try tx.execute("INSERT INTO t VALUES (1)");
         try std.testing.expect(!(try fixture.conn.isAutocommit()));
     }
 
@@ -70,14 +70,14 @@ test "transaction methods reject use after finish" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE t (x INTEGER)");
+    _ = try fixture.conn.execute("CREATE TABLE t (x INTEGER)");
 
     var tx = try fixture.conn.transaction();
     defer tx.deinit();
     try tx.commit();
 
-    try std.testing.expectError(error.Misuse, tx.exec("INSERT INTO t VALUES (1)"));
-    try std.testing.expectError(error.Misuse, tx.execBatch("INSERT INTO t VALUES (1);"));
+    try std.testing.expectError(error.Misuse, tx.execute("INSERT INTO t VALUES (1)"));
+    try std.testing.expectError(error.Misuse, tx.executeBatch("INSERT INTO t VALUES (1);"));
     try std.testing.expectError(error.Misuse, tx.prepare("SELECT x FROM t"));
     try std.testing.expectError(error.Misuse, tx.rollback());
 }
@@ -86,12 +86,12 @@ test "transaction queryRow sees in-flight changes" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER, name TEXT)");
+    _ = try fixture.conn.execute("CREATE TABLE users (id INTEGER, name TEXT)");
 
     var tx = try fixture.conn.transaction();
     defer tx.deinit();
 
-    _ = try tx.exec("INSERT INTO users VALUES (1, 'alice')");
+    _ = try tx.execute("INSERT INTO users VALUES (1, 'alice')");
 
     var row = try tx.queryRow(std.testing.allocator, "SELECT name FROM users");
     defer row.deinit(std.testing.allocator);
@@ -110,11 +110,11 @@ test "transaction behavior export is available" {
     try std.testing.expectEqual(turso.TransactionBehavior.deferred, behavior);
 }
 
-test "transaction run get all and pragma mirror connection helpers" {
+test "transaction run get query and pragma mirror connection helpers" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
+    _ = try fixture.conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
 
     var tx = try fixture.conn.transaction();
     defer tx.deinit();
@@ -130,7 +130,7 @@ test "transaction run get all and pragma mirror connection helpers" {
         else => false,
     });
 
-    var rows = try tx.all(std.testing.allocator, "SELECT id, name FROM users");
+    var rows = try tx.query(std.testing.allocator, "SELECT id, name FROM users");
     defer rows.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 1), rows.len());
 
@@ -145,7 +145,7 @@ test "transaction runWith getWith and allWith bind parameters" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+    _ = try fixture.conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
 
     var tx = try fixture.conn.transaction();
     defer tx.deinit();
@@ -183,16 +183,16 @@ test "transaction runWith getWith and allWith bind parameters" {
     try tx.rollback();
 }
 
-test "transaction execWith and queryRowWith bind parameters" {
+test "transaction executeWith and queryWith bind parameters" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+    _ = try fixture.conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
 
     var tx = try fixture.conn.transaction();
     defer tx.deinit();
 
-    const first_changes = try tx.execWith("INSERT INTO users (name, age) VALUES (?1, ?2)", .{
+    const first_changes = try tx.executeWith("INSERT INTO users (name, age) VALUES (?1, ?2)", .{
         .positional = &.{
             .{ .text = "alice" },
             .{ .integer = 30 },
@@ -200,7 +200,7 @@ test "transaction execWith and queryRowWith bind parameters" {
     });
     try std.testing.expectEqual(@as(u64, 1), first_changes);
 
-    const second_changes = try tx.execWith("INSERT INTO users (name, age) VALUES (:name, :age)", .{
+    const second_changes = try tx.executeWith("INSERT INTO users (name, age) VALUES (:name, :age)", .{
         .named = &.{
             .{ .name = ":name", .value = .{ .text = "bob" } },
             .{ .name = ":age", .value = .{ .integer = 31 } },
@@ -216,6 +216,12 @@ test "transaction execWith and queryRowWith bind parameters" {
         .text => |value| std.mem.eql(u8, value, "bob"),
         else => false,
     });
+
+    var rows = try tx.queryWith(std.testing.allocator, "SELECT id, name FROM users WHERE age >= ?1 ORDER BY id", .{
+        .positional = &.{.{ .integer = 30 }},
+    });
+    defer rows.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 2), rows.len());
 
     try tx.rollback();
 }

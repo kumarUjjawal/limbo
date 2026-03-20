@@ -8,7 +8,7 @@ pub fn main() !void {
     var conn = try db.connect();
     defer conn.deinit();
 
-    _ = try conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
+    _ = try conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
 
     var insert_stmt = try conn.prepare("INSERT INTO users (name) VALUES (:name)");
     defer insert_stmt.deinit();

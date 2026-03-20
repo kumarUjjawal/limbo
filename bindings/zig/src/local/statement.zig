@@ -71,7 +71,7 @@ pub const Statement = struct {
     ///
     /// This discards any produced rows and uses the current statement bindings.
     pub fn run(self: *Statement) Error!RunResult {
-        const connection_handle = self.connection_handle orelse return error.Misuse;
+        const connection_handle = self.connection_handle orelse return errors.fail(error.Misuse);
         const changes = try self.execute();
         return .{
             .changes = changes,
@@ -92,7 +92,7 @@ pub const Statement = struct {
 
     /// Resets the statement and clears existing bindings.
     pub fn reset(self: *Statement) Error!void {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         var error_message: [*c]const u8 = null;
         try errors.checkOk(c.turso_statement_reset(handle, &error_message), error_message);
     }
@@ -107,10 +107,10 @@ pub const Statement = struct {
 
     /// Returns the number of columns in the current result set.
     pub fn columnCount(self: *Statement) Error!usize {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         const count = c.turso_statement_column_count(handle);
         if (count < 0) {
-            return error.NegativeValue;
+            return errors.fail(error.NegativeValue);
         }
         return @intCast(count);
     }
@@ -120,10 +120,10 @@ pub const Statement = struct {
     /// The caller owns the returned slice and must free it with the allocator
     /// used for this call.
     pub fn columnNameAlloc(self: *Statement, allocator: Allocator, index: usize) (Allocator.Error || Error)![]u8 {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         const name_ptr = c.turso_statement_column_name(handle, index);
         if (name_ptr == null) {
-            return error.Misuse;
+            return errors.fail(error.Misuse);
         }
         defer c.turso_str_deinit(name_ptr);
         return allocator.dupe(u8, std.mem.span(name_ptr));
@@ -131,19 +131,19 @@ pub const Statement = struct {
 
     /// Returns the 0-based index for column `name`.
     ///
-    /// Lookups are ASCII case-insensitive to match the Rust binding.
+    /// Lookups are ASCII case-insensitive.
     pub fn columnIndex(self: *Statement, name: []const u8) Error!usize {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         const count = try self.columnCount();
         for (0..count) |index| {
-            const column_name_ptr = c.turso_statement_column_name(handle, index) orelse return error.Misuse;
+            const column_name_ptr = c.turso_statement_column_name(handle, index) orelse return errors.fail(error.Misuse);
             defer c.turso_str_deinit(column_name_ptr);
 
             if (std.ascii.eqlIgnoreCase(std.mem.span(column_name_ptr), name)) {
                 return index;
             }
         }
-        return error.Misuse;
+        return errors.fail(error.Misuse);
     }
 
     /// Returns a copy of the declared type at `index`, if available.
@@ -155,7 +155,7 @@ pub const Statement = struct {
         allocator: Allocator,
         index: usize,
     ) (Allocator.Error || Error)!?[]u8 {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         const decltype_ptr = c.turso_statement_column_decltype(handle, index);
         if (decltype_ptr == null) {
             return null;
@@ -166,10 +166,10 @@ pub const Statement = struct {
 
     /// Returns the number of parameters in the prepared statement.
     pub fn parameterCount(self: *Statement) Error!usize {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         const count = c.turso_statement_parameters_count(handle);
         if (count < 0) {
-            return error.NegativeValue;
+            return errors.fail(error.NegativeValue);
         }
         return @intCast(count);
     }
@@ -180,7 +180,7 @@ pub const Statement = struct {
     /// `@name`, `$name`, or `?1`. Returns `null` when the parameter is not
     /// present in the statement.
     pub fn namedPosition(self: *Statement, name: []const u8) (Allocator.Error || Error)!?usize {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         const name_z = try std.heap.c_allocator.dupeZ(u8, name);
         defer std.heap.c_allocator.free(name_z);
 
@@ -189,7 +189,7 @@ pub const Statement = struct {
             return null;
         }
         if (position == 0) {
-            return error.UnexpectedStatus;
+            return errors.fail(error.UnexpectedStatus);
         }
         return @intCast(position);
     }
@@ -210,7 +210,7 @@ pub const Statement = struct {
     /// Parameter names must include their SQLite prefix, such as `:name`,
     /// `@name`, `$name`, or `?1`.
     pub fn bindNamed(self: *Statement, name: []const u8, value: BindValue) (Allocator.Error || Error)!void {
-        const position = try self.namedPosition(name) orelse return error.Misuse;
+        const position = try self.namedPosition(name) orelse return errors.fail(error.Misuse);
         try self.bindValue(position, value);
     }
 
@@ -221,37 +221,37 @@ pub const Statement = struct {
 
     /// Binds `NULL` at a 1-based positional parameter.
     pub fn bindNull(self: *Statement, position: usize) Error!void {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         try errors.checkStatusCode(c.turso_statement_bind_positional_null(handle, position));
     }
 
     /// Binds an integer at a 1-based positional parameter.
     pub fn bindInt(self: *Statement, position: usize, value: i64) Error!void {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         try errors.checkStatusCode(c.turso_statement_bind_positional_int(handle, position, value));
     }
 
     /// Binds a floating-point value at a 1-based positional parameter.
     pub fn bindFloat(self: *Statement, position: usize, value: f64) Error!void {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         try errors.checkStatusCode(c.turso_statement_bind_positional_double(handle, position, value));
     }
 
     /// Binds UTF-8 text at a 1-based positional parameter.
     pub fn bindText(self: *Statement, position: usize, value: []const u8) Error!void {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         try errors.checkStatusCode(c.turso_statement_bind_positional_text(handle, position, value.ptr, value.len));
     }
 
     /// Binds blob bytes at a 1-based positional parameter.
     pub fn bindBlob(self: *Statement, position: usize, value: []const u8) Error!void {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         try errors.checkStatusCode(c.turso_statement_bind_positional_blob(handle, position, value.ptr, value.len));
     }
 
     /// Reads a value from the current row by column name.
     ///
-    /// Lookups are ASCII case-insensitive to match the Rust binding.
+    /// Lookups are ASCII case-insensitive.
     pub fn readValueByNameAlloc(
         self: *Statement,
         allocator: Allocator,
@@ -266,14 +266,14 @@ pub const Statement = struct {
     /// buffers from the C ABI are only valid until the next statement
     /// operation.
     pub fn readValueAlloc(self: *Statement, allocator: Allocator, index: usize) (Allocator.Error || Error)!Value {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         return switch (c.turso_statement_row_value_kind(handle, index)) {
             c.TURSO_TYPE_NULL => .null,
             c.TURSO_TYPE_INTEGER => .{ .integer = c.turso_statement_row_value_int(handle, index) },
             c.TURSO_TYPE_REAL => .{ .real = c.turso_statement_row_value_double(handle, index) },
             c.TURSO_TYPE_TEXT => .{ .text = try copyRowBytes(allocator, handle, index) },
             c.TURSO_TYPE_BLOB => .{ .blob = try copyRowBytes(allocator, handle, index) },
-            else => error.Misuse,
+            else => errors.fail(error.Misuse),
         };
     }
 
@@ -322,7 +322,7 @@ pub const Statement = struct {
     /// `execute`.
     pub fn queryRow(self: *Statement, allocator: Allocator) (Allocator.Error || Error)!Row {
         switch (try self.step()) {
-            .done => return error.QueryReturnedNoRows,
+            .done => return errors.fail(error.QueryReturnedNoRows),
             .row => {
                 var row = try self.readRowAlloc(allocator);
                 errdefer row.deinit(allocator);
@@ -349,10 +349,16 @@ pub const Statement = struct {
     /// Remaining rows are stepped to completion so statement-side effects match
     /// `run`.
     pub fn get(self: *Statement, allocator: Allocator) (Allocator.Error || Error)!?Row {
-        return self.queryRow(allocator) catch |err| switch (err) {
-            error.QueryReturnedNoRows => null,
-            else => |other| return other,
-        };
+        switch (try self.step()) {
+            .done => return null,
+            .row => {
+                var row = try self.readRowAlloc(allocator);
+                errdefer row.deinit(allocator);
+
+                while (try self.step() == .row) {}
+                return row;
+            },
+        }
     }
 
     /// Resets the statement, applies `params`, and returns the first row, if any.
@@ -364,6 +370,19 @@ pub const Statement = struct {
         defer self.reset() catch {};
         try self.bindParams(params);
         return self.get(allocator);
+    }
+
+    /// Returns every row from the current statement as owned data.
+    ///
+    /// The statement uses its current bindings and is left stepped to
+    /// completion.
+    pub fn query(self: *Statement, allocator: Allocator) (Allocator.Error || Error)!Rows {
+        return self.all(allocator);
+    }
+
+    /// Resets the statement, applies `params`, and returns every row as owned data.
+    pub fn queryWith(self: *Statement, allocator: Allocator, params: BindParams) (Allocator.Error || Error)!Rows {
+        return self.allWith(allocator, params);
     }
 
     /// Returns every row from the current statement as owned data.
@@ -402,7 +421,7 @@ pub const Statement = struct {
     }
 
     fn executeLoopWithIo(self: *Statement) Error!u64 {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         while (true) {
             var rows_changed: u64 = 0;
             var error_message: [*c]const u8 = null;
@@ -422,7 +441,7 @@ pub const Statement = struct {
     }
 
     fn stepWithIo(self: *Statement) Error!StepResult {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         while (true) {
             var error_message: [*c]const u8 = null;
             const status = c.turso_statement_step(handle, &error_message);
@@ -445,7 +464,7 @@ pub const Statement = struct {
     }
 
     fn finalizeWithIo(self: *Statement) Error!void {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         while (true) {
             var error_message: [*c]const u8 = null;
             const status = c.turso_statement_finalize(handle, &error_message);
@@ -466,7 +485,7 @@ pub const Statement = struct {
     fn driveIo(self: *Statement, handle: *c.turso_statement_t) Error!void {
         var error_message: [*c]const u8 = null;
         try errors.checkOk(c.turso_statement_run_io(handle, &error_message), error_message);
-        const io_driver = self.io_driver orelse return error.UnexpectedStatus;
+        const io_driver = self.io_driver orelse return errors.fail(error.UnexpectedStatus);
         try io_driver.run(handle);
     }
 };
@@ -476,7 +495,7 @@ pub const Statement = struct {
 fn copyRowBytes(allocator: Allocator, handle: *c.turso_statement_t, index: usize) (Allocator.Error || Error)![]u8 {
     const len_i64 = c.turso_statement_row_value_bytes_count(handle, index);
     if (len_i64 < 0) {
-        return error.NegativeValue;
+        return errors.fail(error.NegativeValue);
     }
 
     const len: usize = @intCast(len_i64);
@@ -484,6 +503,6 @@ fn copyRowBytes(allocator: Allocator, handle: *c.turso_statement_t, index: usize
         return allocator.alloc(u8, 0);
     }
 
-    const ptr = c.turso_statement_row_value_bytes_ptr(handle, index) orelse return error.Misuse;
+    const ptr = c.turso_statement_row_value_bytes_ptr(handle, index) orelse return errors.fail(error.Misuse);
     return allocator.dupe(u8, ptr[0..len]);
 }

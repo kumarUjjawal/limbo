@@ -9,8 +9,8 @@ test "database open supports in-memory round trip" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
-    _ = try fixture.conn.exec("INSERT INTO users (name) VALUES ('alice')");
+    _ = try fixture.conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
+    _ = try fixture.conn.execute("INSERT INTO users (name) VALUES ('alice')");
 
     var stmt = try fixture.conn.prepare("SELECT id, name FROM users");
     defer stmt.deinit();
@@ -47,8 +47,8 @@ test "database supports multiple connections" {
     var conn1 = try db.connect();
     defer conn1.deinit();
 
-    _ = try conn1.exec("CREATE TABLE t (x INTEGER)");
-    _ = try conn1.exec("INSERT INTO t VALUES (1)");
+    _ = try conn1.execute("CREATE TABLE t (x INTEGER)");
+    _ = try conn1.execute("INSERT INTO t VALUES (1)");
 
     var conn2 = try db.connect();
     defer conn2.deinit();
@@ -85,8 +85,8 @@ test "database open options support attach" {
         var primary_conn = try primary_db.connect();
         defer primary_conn.deinit();
 
-        _ = try primary_conn.exec("CREATE TABLE t(x INTEGER)");
-        _ = try primary_conn.exec("INSERT INTO t VALUES (1), (2), (3)");
+        _ = try primary_conn.execute("CREATE TABLE t(x INTEGER)");
+        _ = try primary_conn.execute("INSERT INTO t VALUES (1), (2), (3)");
     }
 
     {
@@ -98,8 +98,8 @@ test "database open options support attach" {
         var secondary_conn = try secondary_db.connect();
         defer secondary_conn.deinit();
 
-        _ = try secondary_conn.exec("CREATE TABLE q(x INTEGER)");
-        _ = try secondary_conn.exec("INSERT INTO q VALUES (4), (5), (6)");
+        _ = try secondary_conn.execute("CREATE TABLE q(x INTEGER)");
+        _ = try secondary_conn.execute("INSERT INTO q VALUES (4), (5), (6)");
     }
 
     var primary_db = try turso.Database.openWithOptions(primary_path, .{
@@ -117,7 +117,7 @@ test "database open options support attach" {
     );
     defer std.testing.allocator.free(attach_sql);
 
-    _ = try primary_conn.exec(attach_sql);
+    _ = try primary_conn.execute(attach_sql);
 
     var stmt = try primary_conn.prepare(
         "SELECT * FROM t UNION ALL SELECT * FROM secondary.q",
@@ -159,9 +159,9 @@ test "database open options support encryption" {
         var conn = try db.connect();
         defer conn.deinit();
 
-        _ = try conn.exec("CREATE TABLE secrets(value TEXT NOT NULL)");
-        _ = try conn.exec("INSERT INTO secrets VALUES ('secret_data')");
-        _ = try conn.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+        _ = try conn.execute("CREATE TABLE secrets(value TEXT NOT NULL)");
+        _ = try conn.execute("INSERT INTO secrets VALUES ('secret_data')");
+        _ = try conn.execute("PRAGMA wal_checkpoint(TRUNCATE)");
     }
 
     const db_file = try std.fs.openFileAbsolute(db_path, .{});

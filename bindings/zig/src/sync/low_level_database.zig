@@ -104,8 +104,8 @@ pub const Database = struct {
 
     /// Starts the "apply changes" operation and consumes `changes`.
     pub fn applyChangesOperation(self: *Database, changes: *Changes) Error!Operation {
-        const handle = self.handle orelse return error.Misuse;
-        const changes_handle = changes.takeHandle() orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
+        const changes_handle = changes.takeHandle() orelse return errors.fail(error.Misuse);
 
         var operation: ?*const c.turso_sync_operation_t = null;
         var error_message: [*c]const u8 = null;
@@ -118,7 +118,7 @@ pub const Database = struct {
 
     /// Takes one pending IO item from the sync queue.
     pub fn takeIoItem(self: *Database) Error!?IoItem {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         var item: ?*const c.turso_sync_io_item_t = null;
         var error_message: [*c]const u8 = null;
         try errors.checkOk(
@@ -133,7 +133,7 @@ pub const Database = struct {
 
     /// Runs queued post-IO callbacks in the sync engine.
     pub fn stepIoCallbacks(self: *Database) Error!void {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         var error_message: [*c]const u8 = null;
         try errors.checkOk(
             c.turso_sync_database_io_step_callbacks(handle, &error_message),
@@ -170,7 +170,7 @@ pub const Database = struct {
             [*c][*c]const u8,
         ) callconv(.c) c.turso_status_code_t,
     ) Error!Operation {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         var operation: ?*const c.turso_sync_operation_t = null;
         var error_message: [*c]const u8 = null;
         try errors.checkOk(
@@ -188,7 +188,7 @@ pub const Database = struct {
     }
 
     fn driveStatementIo(context: ?*anyopaque, _: *base_c.turso_statement_t) Error!void {
-        const self: *Database = @ptrCast(@alignCast(context orelse return error.Misuse));
+        const self: *Database = @ptrCast(@alignCast(context orelse return errors.fail(error.Misuse)));
         return self.driveIo();
     }
 
@@ -196,7 +196,7 @@ pub const Database = struct {
         switch (item.kind()) {
             .none => try item.done(),
             .http => {
-                const handler = self.http_handler orelse return error.SyncIoHandlerRequired;
+                const handler = self.http_handler orelse return errors.fail(error.SyncIoHandlerRequired);
                 try handler.run(item);
             },
             .full_read => try processFullRead(item),
@@ -212,13 +212,13 @@ fn processFullRead(item: *IoItem) Error!void {
             try item.done();
             return;
         },
-        else => return error.IoFailure,
+        else => return errors.fail(error.IoFailure),
     };
     defer file.close();
 
     var buffer: [4096]u8 = undefined;
     while (true) {
-        const bytes_read = file.read(&buffer) catch return error.IoFailure;
+        const bytes_read = file.read(&buffer) catch return errors.fail(error.IoFailure);
         if (bytes_read == 0) {
             break;
         }
@@ -233,34 +233,34 @@ fn processFullWrite(item: *IoItem) Error!void {
     const parent_path = std.fs.path.dirname(request.path) orelse ".";
     const file_name = std.fs.path.basename(request.path);
 
-    var dir = openDirPath(parent_path) catch return error.IoFailure;
+    var dir = openDirPath(parent_path) catch return errors.fail(error.IoFailure);
     defer dir.close();
 
     var temp_name_buffer: [std.fs.max_path_bytes]u8 = undefined;
     const temp_name = std.fmt.bufPrint(&temp_name_buffer, "{s}.tmp", .{file_name}) catch {
-        return error.IoFailure;
+        return errors.fail(error.IoFailure);
     };
 
     var file = dir.createFile(temp_name, .{
         .truncate = true,
         .read = false,
-    }) catch return error.IoFailure;
+    }) catch return errors.fail(error.IoFailure);
     errdefer {
         file.close();
         dir.deleteFile(temp_name) catch {};
     }
 
     if (request.content.len != 0) {
-        file.writeAll(request.content) catch return error.IoFailure;
+        file.writeAll(request.content) catch return errors.fail(error.IoFailure);
     }
-    file.sync() catch return error.IoFailure;
+    file.sync() catch return errors.fail(error.IoFailure);
     file.close();
 
     dir.rename(temp_name, file_name) catch {
         dir.deleteFile(temp_name) catch {};
-        return error.IoFailure;
+        return errors.fail(error.IoFailure);
     };
-    syncDir(dir) catch return error.IoFailure;
+    syncDir(dir) catch return errors.fail(error.IoFailure);
 
     try item.done();
 }

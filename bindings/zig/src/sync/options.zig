@@ -1,7 +1,6 @@
 //! Sync configuration types for the Zig binding.
 //!
-//! These mirror the embedded-replica configuration shape used by the other
-//! bindings while keeping the Zig API explicit and blocking.
+//! These options keep embedded-replica configuration explicit and blocking.
 const std = @import("std");
 const c = @import("c.zig").bindings;
 

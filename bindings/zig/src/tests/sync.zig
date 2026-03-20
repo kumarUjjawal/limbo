@@ -31,8 +31,8 @@ test "sync low-level database create and connect reuse local SQL surface" {
     var conn = try db.extractConnection(&connect_operation);
     defer conn.deinit();
 
-    _ = try conn.exec("CREATE TABLE t(x INTEGER)");
-    _ = try conn.exec("INSERT INTO t VALUES (1), (2), (3)");
+    _ = try conn.execute("CREATE TABLE t(x INTEGER)");
+    _ = try conn.execute("INSERT INTO t VALUES (1), (2), (3)");
 
     var row = try conn.queryRow(std.testing.allocator, "SELECT COUNT(*) FROM t");
     defer row.deinit(std.testing.allocator);
@@ -103,7 +103,7 @@ test "sync database open and connect reuse local SQL surface" {
     var conn = try db.connect();
     defer conn.deinit();
 
-    _ = try conn.exec("CREATE TABLE t(id INTEGER PRIMARY KEY, x INTEGER)");
+    _ = try conn.execute("CREATE TABLE t(id INTEGER PRIMARY KEY, x INTEGER)");
 
     _ = try conn.runWith("INSERT INTO t (x) VALUES (?1), (?2), (?3)", .{
         .positional = &.{

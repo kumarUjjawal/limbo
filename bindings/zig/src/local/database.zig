@@ -26,9 +26,6 @@ pub const Database = struct {
     }
 
     /// Opens a local database at `path` with explicit configuration.
-    ///
-    /// This mirrors the local options shape used by the other bindings while
-    /// keeping the Zig API blocking and explicit.
     pub fn openWithOptions(
         path: []const u8,
         db_options: DatabaseOptions,
@@ -67,7 +64,7 @@ pub const Database = struct {
     /// The returned connection must be used exclusively and cleaned up with
     /// `Connection.deinit`.
     pub fn connect(self: *Database) Error!Connection {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         var connection: ?*c.turso_connection_t = null;
         var error_message: [*c]const u8 = null;
         try errors.checkOk(c.turso_database_connect(handle, &connection, &error_message), error_message);

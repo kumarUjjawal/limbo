@@ -64,7 +64,7 @@ pub const IoItem = struct {
 
     /// Returns the borrowed HTTP request fields for an HTTP item.
     pub fn httpRequest(self: *const IoItem) Error!HttpRequest {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         var request: c.turso_sync_io_http_request_t = .{};
         try checkOk(c.turso_sync_database_io_request_http(handle, &request));
         return .{
@@ -81,7 +81,7 @@ pub const IoItem = struct {
 
     /// Returns the borrowed header at `index`.
     pub fn httpHeader(self: *const IoItem, index: usize) Error!HttpHeader {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         var header: c.turso_sync_io_http_header_t = .{};
         try checkOk(c.turso_sync_database_io_request_http_header(handle, index, &header));
         return .{
@@ -92,7 +92,7 @@ pub const IoItem = struct {
 
     /// Returns the borrowed full-read request.
     pub fn fullReadRequest(self: *const IoItem) Error!FullReadRequest {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         var request: c.turso_sync_io_full_read_request_t = .{};
         try checkOk(c.turso_sync_database_io_request_full_read(handle, &request));
         return .{ .path = sliceFromRef(request.path) };
@@ -100,7 +100,7 @@ pub const IoItem = struct {
 
     /// Returns the borrowed full-write request.
     pub fn fullWriteRequest(self: *const IoItem) Error!FullWriteRequest {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         var request: c.turso_sync_io_full_write_request_t = .{};
         try checkOk(c.turso_sync_database_io_request_full_write(handle, &request));
         return .{
@@ -111,7 +111,7 @@ pub const IoItem = struct {
 
     /// Poisons the IO request with an error message.
     pub fn poison(self: *const IoItem, message: []const u8) Error!void {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         var slice_ref = c.turso_slice_ref_t{
             .ptr = if (message.len == 0) null else message.ptr,
             .len = message.len,
@@ -121,13 +121,13 @@ pub const IoItem = struct {
 
     /// Sets the HTTP status code for an HTTP response.
     pub fn setStatus(self: *const IoItem, status_code: i32) Error!void {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         try checkOk(c.turso_sync_database_io_status(handle, status_code));
     }
 
     /// Pushes a response or file buffer to the IO completion.
     pub fn pushBuffer(self: *const IoItem, buffer: []const u8) Error!void {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         var slice_ref = c.turso_slice_ref_t{
             .ptr = if (buffer.len == 0) null else buffer.ptr,
             .len = buffer.len,
@@ -137,7 +137,7 @@ pub const IoItem = struct {
 
     /// Marks the IO item as complete.
     pub fn done(self: *const IoItem) Error!void {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         try checkOk(c.turso_sync_database_io_done(handle));
     }
 };

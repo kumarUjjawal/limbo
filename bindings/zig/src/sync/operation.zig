@@ -39,7 +39,7 @@ pub const Operation = struct {
 
     /// Resumes the operation once.
     pub fn @"resume"(self: *const Operation) Error!ResumeResult {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         var error_message: [*c]const u8 = null;
         const status = c.turso_sync_operation_resume(handle, &error_message);
         return switch (status) {
@@ -68,7 +68,7 @@ pub const Operation = struct {
 
     /// Extracts an owned change-set result, if any.
     pub fn extractChanges(self: *Operation) Error!?Changes {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         var changes: ?*const c.turso_sync_changes_t = null;
         try errors.checkStatusCode(c.turso_sync_operation_result_extract_changes(handle, &changes));
         if (changes == null) {
@@ -79,14 +79,14 @@ pub const Operation = struct {
 
     /// Extracts owned sync statistics.
     pub fn extractStatsAlloc(self: *Operation, allocator: Allocator) (Allocator.Error || Error)!Stats {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         var stats: c.turso_sync_stats_t = .{};
         try errors.checkStatusCode(c.turso_sync_operation_result_extract_stats(handle, &stats));
         return Stats.fromCAlloc(allocator, stats);
     }
 
     pub fn extractConnectionWithDriver(self: *Operation, io_driver: IoDriver) Error!Connection {
-        const handle = self.handle orelse return error.Misuse;
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         var connection: ?*const c.turso_connection_t = null;
         try errors.checkStatusCode(c.turso_sync_operation_result_extract_connection(handle, &connection));
         return .{

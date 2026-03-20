@@ -1,60 +1,28 @@
 # turso
 
-The next evolution of SQLite: a high-performance, SQLite-compatible database library for Zig.
-
-## About
+The next evolution of SQLite: A high-performance, SQLite-compatible database library for Zig
 
 > **⚠️ Warning:** This software is in BETA. It may still contain bugs and unexpected behavior. Use caution with production data and ensure you have backups.
 
-The Zig binding exposes blocking local and embedded-replica sync APIs. It is built on the shared `sdk-kit/turso.h` and `sync/sdk-kit/turso_sync.h` C ABIs used by the other Turso bindings.
-
 ## Features
 
-- **SQLite compatible:** SQLite query language and file format support ([status](../../COMPAT.md)).
-- **In-process**: No network overhead, runs directly in your application
-- **Prepared statements**: Reuse statements with positional and named parameter binding
-- **Batch execution**: Run multi-statement setup or migration SQL through `Connection.execBatch`
-- **Convenience queries**: Use `run`, `get`, `all`, and `pragma` on `Connection` and `Transaction`, plus `run`, `get`, and `all` on `Statement`
-- **Parameterized helpers**: Pass `BindParams` into `execWith`, `queryRowWith`, `runWith`, `getWith`, and `allWith` without dropping to manual bind calls
-- **Transactions**: Use deferred, immediate, or exclusive transactions with explicit commit and rollback
-- **Single-row queries**: Fetch an owned `Row` with `queryRow` and access values by index or column name
-- **Configurable local open**: Enable experimental features, choose a VFS, or configure encryption with `Database.openWithOptions`
-- **Blocking sync database**: Open an embedded replica, connect to it, and call `push`, `pull`, `stats`, and `checkpoint`
-- **Low-level sync control**: Drop down to `turso.sync.LowLevelDatabase`, `Operation`, and `IoItem` for custom driving
-- **Global setup**: Configure log filtering and callbacks with `turso.setup`
-- **Owned values**: Text and blob row values are copied into owned Zig values
-- **Small surface area**: Focused local API built around `Database`, `Connection`, `Transaction`, `Statement`, `Row`, and `Value`
-
-## Supported Today
-
-- local database handles for `:memory:` and file-backed paths
-- global setup through `turso.setup`
-- blocking database API
-- blocking embedded-replica sync APIs through `turso.sync.Database`
-- low-level sync operation and IO queue control through `turso.sync.LowLevelDatabase`
-- configurable local open through `Database.openWithOptions`
-- direct SQL execution with `Connection.exec`
-- multi-statement execution with `Connection.execBatch`
-- convenience helpers through `Connection.run`, `Connection.get`, `Connection.all`, `Connection.pragma`, `Transaction.run`, `Transaction.get`, `Transaction.all`, `Transaction.pragma`, `Statement.run`, `Statement.get`, and `Statement.all`
-- parameterized convenience helpers through `BindParams`, `Statement.bindParams`, `Statement.executeWith`, `Statement.queryRowWith`, `Statement.runWith`, `Statement.getWith`, `Statement.allWith`, `Connection.execWith`, `Connection.queryRowWith`, `Connection.runWith`, `Connection.getWith`, `Connection.allWith`, `Transaction.execWith`, `Transaction.queryRowWith`, `Transaction.runWith`, `Transaction.getWith`, and `Transaction.allWith`
-- transactions with `Connection.transaction`, `Connection.transactionWithBehavior`, and `Transaction.commit` / `Transaction.rollback`
-- prepared statements with positional and named parameters, including numbered placeholders such as `?1` and `?3`
-- single-row queries through `Connection.queryRow`, `Transaction.queryRow`, and `Statement.queryRow`
-- connection helpers for busy timeout, autocommit state, and last insert row id
-- row stepping, owned `Row` wrappers, statement metadata, and owned `Value` reads
-- explicit resource cleanup with `deinit`
-
-## Not Yet Supported
-
-- async or non-blocking APIs
-- standalone package publishing
-- cross-target `zig build -Dtarget=...`
+- **SQLite Compatible**: SQLite query language and file format support ([status](../../COMPAT.md))
+- **Blocking API**: Straightforward local and embedded-replica APIs that fit direct Zig control flow
+- **In-Process**: Runs directly inside your application
+- **Prepared Statements**: Reuse statements with positional, named, and numbered parameter binding
+- **Transactions**: Deferred, immediate, and exclusive transactions with explicit commit and rollback
+- **Owned Results**: Rows, text values, and blob values can be copied into Zig-owned memory
+- **Embedded Replica Sync**: Sync with Turso Cloud using `turso.sync.Database`
+- **Low-Level Sync Control**: Drive raw sync operations and IO items through `turso.sync.LowLevelDatabase`
+- **Configurable Open**: Choose local experimental features, VFS settings, encryption, and sync options explicitly
+- **Global Setup**: Configure logging through `turso.setup`
+- **Explicit Cleanup**: Long-lived handles and owned buffers use `deinit`
 
 ## Installation
 
-The package entry point is `src/root.zig`. The `src/main.zig` file is only a runnable demo used by `zig build run`.
+The package entry point is `src/root.zig`. `src/main.zig` is the demo used by `zig build run`.
 
-The default consumer contract for `0.0.1` is a matching Turso SDK prefix. The package expects:
+The current binding builds against a matching Turso SDK prefix. The package expects:
 
 - `include/turso.h`
 - `include/turso_sync.h`
@@ -93,7 +61,7 @@ zig build \
 
 ### Repository Development Path
 
-For in-repository development, `build.zig` can still fall back to Cargo and build `turso_sync_sdk_kit` from the workspace, but this path is now explicit:
+For in-repository development, `build.zig` can invoke Cargo and build `turso_sync_sdk_kit` from the workspace, but this path is explicit:
 
 ```bash
 cd bindings/zig
@@ -150,26 +118,13 @@ cd bindings/zig
 zig build test -Dturso-sdk-prefix=/path/to/turso-sdk
 ```
 
-For now, the Zig binding supports native host builds only. Cross-target `zig build -Dtarget=...` is rejected until the Rust SDK artifact target is propagated alongside the Zig target.
-
-## Examples
-
-Runnable examples live in [`examples/`](./examples).
-
-```bash
-cd bindings/zig
-zig build examples
-zig build example-memory
-zig build example-file
-zig build example-prepared
-zig build example-values
-```
+For now, the Zig binding supports native host builds only. Cross-target `zig build -Dtarget=...` is rejected until matching shared SDK artifacts are produced for the requested Zig target.
 
 ## Quick Start
 
-### In-Memory Database
+Runnable examples live in [`examples/`](./examples).
 
-Full example: [`examples/memory.zig`](./examples/memory.zig)
+### In-Memory Database
 
 ```zig
 const std = @import("std");
@@ -182,10 +137,11 @@ pub fn main() !void {
     var conn = try db.connect();
     defer conn.deinit();
 
-    _ = try conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
-    _ = try conn.exec("INSERT INTO users (name) VALUES ('alice')");
+    _ = try conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
+    _ = try conn.execute("INSERT INTO users (name) VALUES ('alice')");
+    _ = try conn.execute("INSERT INTO users (name) VALUES ('bob')");
 
-    var stmt = try conn.prepare("SELECT id, name FROM users");
+    var stmt = try conn.prepare("SELECT id, name FROM users ORDER BY id");
     defer stmt.deinit();
 
     while (try stmt.step() == .row) {
@@ -202,293 +158,268 @@ pub fn main() !void {
 
 ### File-Based Database
 
-Full example: [`examples/file.zig`](./examples/file.zig)
-
-```zig
-const turso = @import("turso");
-
-pub fn main() !void {
-    var db = try turso.Database.open("app.db");
-    defer db.deinit();
-
-    var conn = try db.connect();
-    defer conn.deinit();
-
-    _ = try conn.exec(
-        \\CREATE TABLE IF NOT EXISTS posts (
-        \\    id INTEGER PRIMARY KEY,
-        \\    title TEXT NOT NULL
-        \\)
-    );
-
-    _ = try conn.exec("INSERT INTO posts (title) VALUES ('hello')");
-}
-```
-
-### Prepared Statements
-
-Full example: [`examples/prepared.zig`](./examples/prepared.zig)
-
 ```zig
 const std = @import("std");
 const turso = @import("turso");
 
 pub fn main() !void {
-    var db = try turso.Database.open(":memory:");
+    var db = try turso.Database.open("my-database.db");
     defer db.deinit();
 
     var conn = try db.connect();
     defer conn.deinit();
 
-    _ = try conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
+    _ = try conn.execute(
+        \\CREATE TABLE IF NOT EXISTS posts (
+        \\    id INTEGER PRIMARY KEY,
+        \\    title TEXT NOT NULL,
+        \\    content TEXT
+        \\)
+    );
 
-    var insert_stmt = try conn.prepare("INSERT INTO users (name) VALUES (:name)");
-    defer insert_stmt.deinit();
-
-    try insert_stmt.bindNamed(":name", .{ .text = "alice" });
-    _ = try insert_stmt.execute();
-    try insert_stmt.reset();
-
-    try insert_stmt.bindNamed(":name", .{ .text = "bob" });
-    _ = try insert_stmt.execute();
-
-    var query_stmt = try conn.prepare("SELECT id, name FROM users WHERE name = :name");
-    defer query_stmt.deinit();
-
-    try query_stmt.bindNamed(":name", .{ .text = "alice" });
-
-    while (try query_stmt.step() == .row) {
-        var value = try query_stmt.readValueAlloc(std.heap.page_allocator, 1);
-        defer value.deinit(std.heap.page_allocator);
-        std.debug.print("{f}\n", .{value});
-    }
+    const result = try conn.runWith("INSERT INTO posts (title, content) VALUES (?1, ?2)", .{
+        .positional = &.{
+            .{ .text = "Hello World" },
+            .{ .text = "This is my first blog post" },
+        },
+    });
+    std.debug.print("Inserted {d} rows\n", .{result.changes});
 }
 ```
 
-### Global Setup and Local Options
+### Synced Database
 
 ```zig
 const turso = @import("turso");
 
 pub fn main() !void {
-    try turso.setup(.{ .log_level = .debug });
-
-    var db = try turso.Database.openWithOptions("app.db", .{
-        .experimental = &.{ .attach },
+    var db = try turso.sync.Database.openWithOptions("local.db", .{
+        .remote_url = "libsql://your-database.turso.io",
+        .auth_token = "your-token",
     });
     defer db.deinit();
+
+    var conn = try db.connect();
+    defer conn.deinit();
+
+    _ = try conn.execute("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, content TEXT)");
+    _ = try conn.execute("INSERT INTO notes (content) VALUES ('my first synced note')");
+
+    try db.push();
+    _ = try db.pull();
 }
 ```
 
 ## API Reference
 
-### Setup
-
-Apply global Turso settings before opening a database:
-
-```zig
-try turso.setup(.{ .log_level = .info });
-```
-
 ### Database
 
-Create or open a local database:
+Create a local database and configure global setup:
 
 ```zig
+const turso = @import("turso");
+
+try turso.setup(.{ .log_level = .info });
+
 var memory_db = try turso.Database.open(":memory:");
+defer memory_db.deinit();
+
 var file_db = try turso.Database.open("data.db");
+defer file_db.deinit();
+
 var configured_db = try turso.Database.openWithOptions("secure.db", .{
+    .experimental = &.{ .attach },
     .encryption = .{
         .cipher = .aegis256,
         .hexkey = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
     },
 });
+defer configured_db.deinit();
 ```
 
 ### Connection
 
-Create a connection and execute SQL:
+Execute SQL directly, run one-shot queries, and create reusable statements:
 
 ```zig
+const std = @import("std");
+const allocator = std.heap.page_allocator;
+
 var conn = try db.connect();
 defer conn.deinit();
 
-_ = try conn.exec("CREATE TABLE users (name TEXT NOT NULL)");
-try conn.execBatch(
-    \\INSERT INTO users (name) VALUES ('alice');
-    \\PRAGMA user_version;
-);
+_ = try conn.execute("INSERT INTO users (name) VALUES ('alice')");
 
-try conn.busyTimeoutMs(5_000);
-const autocommit = try conn.isAutocommit();
-const rowid = try conn.lastInsertRowId();
-_ = .{ autocommit, rowid };
-```
+const run_result = try conn.runWith("INSERT INTO users (name) VALUES (?1)", .{
+    .positional = &.{.{ .text = "bob" }},
+});
+_ = run_result;
 
-Convenience helpers are available for common one-shot queries:
-
-```zig
-const insert_result = try conn.run("INSERT INTO users (name) VALUES ('alice')");
-_ = insert_result;
-
-if (try conn.get(allocator, "SELECT id, name FROM users ORDER BY id LIMIT 1")) |row_value| {
-    var row = row_value;
-    defer row.deinit(allocator);
-}
-
-var rows = try conn.all(allocator, "SELECT id, name FROM users ORDER BY id");
-defer rows.deinit(allocator);
-
-var pragma_rows = try conn.pragma(allocator, "user_version");
-defer pragma_rows.deinit(allocator);
-```
-
-Use `BindParams` when the one-shot helper needs parameters:
-
-```zig
-const params: turso.BindParams = .{
-    .positional = &.{
-        .{ .text = "alice" },
-        .{ .integer = 30 },
-    },
-};
-
-const insert_result = try conn.runWith(
-    "INSERT INTO users (name, age) VALUES (?1, ?2)",
-    params,
-);
-_ = insert_result;
-
-var rows = try conn.allWith(allocator, "SELECT id, name FROM users WHERE age >= :min_age", .{
-    .named = &.{.{ .name = ":min_age", .value = .{ .integer = 30 } }},
+var rows = try conn.queryWith(allocator, "SELECT id, name FROM users WHERE id >= ?1 ORDER BY id", .{
+    .positional = &.{.{ .integer = 1 }},
 });
 defer rows.deinit(allocator);
 
-var first_row = try conn.queryRowWith(allocator, "SELECT id, name FROM users WHERE age = ?1", .{
-    .positional = &.{.{ .integer = 30 }},
-});
-defer first_row.deinit(allocator);
+var tx = try conn.transactionWithBehavior(.immediate);
+defer tx.deinit();
+
+_ = try tx.execute("INSERT INTO users (name) VALUES ('carol')");
+try tx.commit();
+
+var stmt = try conn.prepare("SELECT id, name FROM users WHERE id = ?1");
+defer stmt.deinit();
+try stmt.bindInt(1, 1);
 ```
+
+Connections also expose `executeBatch`, `busyTimeoutMs`, `isAutocommit`, `lastInsertRowId`, `transaction`, `transactionWithBehavior`, and `pragma`.
 
 ### Statement
 
-Bind values, step through rows, and read owned results:
+Bind parameters, step through rows, and reuse prepared statements:
 
 ```zig
-var stmt = try conn.prepare("SELECT name FROM users WHERE name = :name");
-defer stmt.deinit();
+const std = @import("std");
+const allocator = std.heap.page_allocator;
 
-try stmt.bindNamed(":name", .{ .text = "alice" });
-
-while (try stmt.step() == .row) {
-    var value = try stmt.readValueAlloc(allocator, 0);
-    defer value.deinit(allocator);
-}
-```
-
-Prepared statements also support convenience execution with their current bindings:
-
-```zig
-var insert_stmt = try conn.prepare("INSERT INTO users (name) VALUES (?1)");
+var insert_stmt = try conn.prepare("INSERT INTO users (name) VALUES (:name)");
 defer insert_stmt.deinit();
 
-try insert_stmt.bindText(1, "alice");
-const insert_result = try insert_stmt.run();
-_ = insert_result;
-
+try insert_stmt.bindNamed(":name", .{ .text = "alice" });
+_ = try insert_stmt.run();
 try insert_stmt.reset();
+
+const changes = try insert_stmt.executeWith(.{
+    .named = &.{.{ .name = ":name", .value = .{ .text = "bob" } }},
+});
+_ = changes;
 
 var query_stmt = try conn.prepare("SELECT id, name FROM users ORDER BY id");
 defer query_stmt.deinit();
 
-var rows = try query_stmt.all(allocator);
-defer rows.deinit(allocator);
+while (try query_stmt.step() == .row) {
+    var name = try query_stmt.readValueAlloc(allocator, 1);
+    defer name.deinit(allocator);
+}
 ```
 
-Prepared statements also accept shared parameter sets:
+Prepared statements also expose `queryRowWith`, `getWith`, `queryWith`, `allWith`, `parameterCount`, `namedPosition`, `columnCount`, `columnNameAlloc`, and `columnDeclTypeAlloc`.
+
+### Working with Results
+
+Use the helper that matches the result shape you want:
 
 ```zig
-var insert_stmt = try conn.prepare("INSERT INTO users (name) VALUES (:name)");
-defer insert_stmt.deinit();
+const std = @import("std");
+const allocator = std.heap.page_allocator;
 
-const changes = try insert_stmt.executeWith(.{
-    .named = &.{.{ .name = ":name", .value = .{ .text = "alice" } }},
-});
-_ = changes;
-
-var query_stmt = try conn.prepare("SELECT id, name FROM users WHERE name = :name");
-defer query_stmt.deinit();
-
-var row = (try query_stmt.getWith(allocator, .{
-    .named = &.{.{ .name = ":name", .value = .{ .text = "alice" } }},
-})).?;
-defer row.deinit(allocator);
-```
-
-### Transaction
-
-Run a group of statements atomically:
-
-```zig
-var tx = try conn.transactionWithBehavior(.immediate);
-defer tx.deinit();
-
-_ = try tx.exec("INSERT INTO users (name) VALUES ('alice')");
-_ = try tx.exec("INSERT INTO users (name) VALUES ('bob')");
-
-try tx.commit();
-```
-
-### Row
-
-`queryRow` returns an owned row with copied column names and values:
-
-```zig
-var row = try conn.queryRow(allocator, "SELECT id, name FROM users");
+var row = try conn.queryRow(allocator, "SELECT id, name FROM users ORDER BY id LIMIT 1");
 defer row.deinit(allocator);
 
 const id = try row.valueByName("id");
 const name = try row.value(1);
 _ = .{ id, name };
+
+if (try conn.get(allocator, "SELECT id, name FROM users WHERE id = 99")) |row_value| {
+    var maybe_row = row_value;
+    defer maybe_row.deinit(allocator);
+}
+
+var rows = try conn.all(allocator, "SELECT id, name FROM users ORDER BY id");
+defer rows.deinit(allocator);
+
+const first = try rows.row(0);
+const first_name = try first.valueByName("name");
+_ = first_name;
 ```
 
-### Working with Values
+`get` returns `null` when there is no row. `queryRow` returns `error.QueryReturnedNoRows`. `query` is a matching alias for `all`. Text and blob values are copied into owned Zig memory, so `Row`, `Rows`, and owned `Value` buffers must be cleaned up with `deinit`.
 
-Full example: [`examples/values.zig`](./examples/values.zig)
+When a call fails, `turso.lastErrorDetails()` returns the captured error tag,
+native status code, and native message for the most recent failure on the
+current thread. Use `turso.lastErrorMessageAlloc(allocator)` when you need to
+keep a copy of the message after the next failing call.
 
-The current Zig binding returns owned values for text and blob columns:
+### Sync API Reference
+
+#### sync.Database
+
+Create a synced database that synchronizes with Turso Cloud:
 
 ```zig
-var value = try stmt.readValueAlloc(allocator, 0);
-defer value.deinit(allocator);
+const std = @import("std");
+const allocator = std.heap.page_allocator;
+const turso = @import("turso");
 
-switch (value) {
-    .null => {},
-    .integer => |v| std.debug.print("{d}\n", .{v}),
-    .real => |v| std.debug.print("{d}\n", .{v}),
-    .text => |v| std.debug.print("{s}\n", .{v}),
-    .blob => |v| std.debug.print("{any}\n", .{v}),
+var sync_db = try turso.sync.Database.openWithOptions("local.db", .{
+    .remote_url = "libsql://db.turso.io",
+    .auth_token = "your-token",
+    .bootstrap_if_empty = true,
+    .remote_encryption = .{
+        .key = "base64-encoded-key",
+        .cipher = .aes256gcm,
+    },
+});
+defer sync_db.deinit();
+
+var conn = try sync_db.connect();
+defer conn.deinit();
+
+try sync_db.push();
+const had_changes = try sync_db.pull();
+_ = had_changes;
+
+try sync_db.checkpoint();
+
+var stats = try sync_db.stats(allocator);
+defer stats.deinit(allocator);
+```
+
+#### sync.LowLevelDatabase
+
+Drive raw sync operations and IO directly when you need full control over the sync engine:
+
+```zig
+const turso = @import("turso");
+
+var raw = try turso.sync.LowLevelDatabase.init("local.db", .{
+    .bootstrap_if_empty = false,
+});
+defer raw.deinit();
+
+var operation = try raw.connectOperation();
+defer operation.deinit();
+
+while (true) {
+    switch (try operation.@"resume"()) {
+        .io => try raw.driveIo(),
+        .done => break,
+    }
 }
 ```
 
-## Behavior and Conventions
+Use `takeIoItem` and `stepIoCallbacks` when you need to process the sync IO queue yourself.
 
-- `Database`, `Connection`, `Statement`, and owned `Value` buffers must be cleaned up explicitly with `deinit`.
-- `Transaction.deinit` rolls back unfinished work. Call `commit` or `rollback` explicitly when the outcome matters.
-- Parameter binding supports positional and named placeholders. Named lookups must include the SQLite prefix such as `:name`, `@name`, `$name`, or `?3`.
-- `BindParams.named` entries follow the same rule as `bindNamed`: parameter names must include the SQLite prefix such as `:name`, `@name`, `$name`, or `?3`.
-- Column-name lookups on `Statement` and `Row` are ASCII case-insensitive to match the Rust binding.
-- `Connection.execBatch` executes each statement to completion and discards any produced rows.
-- `Connection.get`, `Connection.all`, `Connection.pragma`, `Transaction.get`, `Transaction.all`, and the matching statement helpers return owned rows that must be cleaned up with `deinit`.
-- The primary local and sync APIs are blocking. Advanced sync integrations can drop to `turso.sync.LowLevelDatabase` and the raw operation/IO queue layer.
-- Row text and blob values are copied before being returned to user code.
+## Not Yet Supported
+
+The current Zig binding does not yet provide:
+
+### API and Runtime
+
+- [ ] Cached statement preparation on `Connection`
+- [ ] Explicit connection cache flush helper
+- [ ] High-level sync transport hooks for rotating auth tokens or custom HTTP handling
+- [ ] Non-blocking public APIs
+
+### Packaging and Distribution
+
+- [ ] Standalone Zig package publishing with versioned SDK artifacts
+- [ ] Cross-target `zig build -Dtarget=...`
 
 ## License
 
-This project is licensed under the [MIT license](./LICENSE.md).
+MIT
 
 ## Support
 
 - [GitHub Issues](https://github.com/tursodatabase/turso/issues)
-- [Documentation](https://docs.turso.tech)
-- [Discord Community](https://tur.so/discord)
+- [Discord Community](https://discord.gg/turso)

@@ -1,5 +1,6 @@
 //! Owned multi-row query results returned by convenience helpers.
 const std = @import("std");
+const errors = @import("error.zig");
 const Row = @import("row.zig").Row;
 
 const Allocator = std.mem.Allocator;
@@ -25,6 +26,7 @@ pub const Rows = struct {
     /// Returns the row at `index`.
     pub fn row(self: *const Rows, index: usize) error{Misuse}!*const Row {
         if (index >= self.items.len) {
+            errors.record(error.Misuse);
             return error.Misuse;
         }
         return &self.items[index];

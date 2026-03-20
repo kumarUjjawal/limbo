@@ -6,8 +6,8 @@ test "row exposes copied names and values" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER, name TEXT)");
-    _ = try fixture.conn.exec("INSERT INTO users VALUES (1, 'alice')");
+    _ = try fixture.conn.execute("CREATE TABLE users (id INTEGER, name TEXT)");
+    _ = try fixture.conn.execute("INSERT INTO users VALUES (1, 'alice')");
 
     var row = try fixture.conn.queryRow(std.testing.allocator, "SELECT id, name FROM users");
     defer row.deinit(std.testing.allocator);
@@ -34,8 +34,8 @@ test "row rejects missing columns and values" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
-    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER)");
-    _ = try fixture.conn.exec("INSERT INTO users VALUES (1)");
+    _ = try fixture.conn.execute("CREATE TABLE users (id INTEGER)");
+    _ = try fixture.conn.execute("INSERT INTO users VALUES (1)");
 
     var row = try fixture.conn.queryRow(std.testing.allocator, "SELECT id FROM users");
     defer row.deinit(std.testing.allocator);

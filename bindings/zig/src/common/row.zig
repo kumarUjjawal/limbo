@@ -3,6 +3,7 @@
 //! Each row owns copied column names and values so callers can keep the row
 //! after the originating statement advances or is reset.
 const std = @import("std");
+const errors = @import("error.zig");
 const Value = @import("value.zig").Value;
 
 const Allocator = std.mem.Allocator;
@@ -42,13 +43,14 @@ pub const Row = struct {
 
     /// Returns the 0-based index for `name`.
     ///
-    /// Lookups are ASCII case-insensitive to match the Rust binding.
+    /// Lookups are ASCII case-insensitive.
     pub fn columnIndex(self: *const Row, name: []const u8) error{Misuse}!usize {
         for (self.column_names, 0..) |column_name, index| {
             if (std.ascii.eqlIgnoreCase(column_name, name)) {
                 return index;
             }
         }
+        errors.record(error.Misuse);
         return error.Misuse;
     }
 
@@ -59,7 +61,7 @@ pub const Row = struct {
 
     /// Returns the value for column `name`.
     ///
-    /// Lookups are ASCII case-insensitive to match the Rust binding.
+    /// Lookups are ASCII case-insensitive.
     pub fn valueByName(self: *const Row, name: []const u8) error{Misuse}!*const Value {
         return self.value(try self.columnIndex(name));
     }
@@ -67,6 +69,7 @@ pub const Row = struct {
 
 fn indexOrError(len: usize, index: usize) error{Misuse}!usize {
     if (index >= len) {
+        errors.record(error.Misuse);
         return error.Misuse;
     }
     return index;

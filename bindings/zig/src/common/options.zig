@@ -1,7 +1,6 @@
 //! Common option types shared by the Zig binding.
 //!
-//! These types keep the public local configuration surface close to the other
-//! bindings while still translating cleanly into the shared C ABI.
+//! These types describe local database configuration and translate into the C ABI.
 const std = @import("std");
 const c = @import("../c.zig").bindings;
 

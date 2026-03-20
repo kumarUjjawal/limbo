@@ -56,7 +56,7 @@ pub const BlockingHttpTransport = struct {
         if (db_options.remote_url) |remote_url| {
             state.base_url = normalizeBaseUrlAlloc(allocator, remote_url) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
-                error.InvalidRemoteUrlScheme => return error.Misuse,
+                error.InvalidRemoteUrlScheme => return errors.fail(error.Misuse),
             };
         }
         errdefer if (state.base_url) |base_url| allocator.free(base_url);
@@ -90,7 +90,7 @@ pub const BlockingHttpTransport = struct {
     }
 
     fn run(context: ?*anyopaque, item: *IoItem) Error!void {
-        const state: *State = @ptrCast(@alignCast(context orelse return error.Misuse));
+        const state: *State = @ptrCast(@alignCast(context orelse return errors.fail(error.Misuse)));
         process(state, item) catch |err| switch (err) {
             error.Busy => return error.Busy,
             error.Interrupt => return error.Interrupt,
@@ -168,7 +168,7 @@ pub const BlockingHttpTransport = struct {
         header_count_raw: i32,
     ) ProcessError!HeaderList {
         if (header_count_raw < 0) {
-            return error.NegativeValue;
+            return errors.fail(error.NegativeValue);
         }
 
         const header_count: usize = @intCast(header_count_raw);

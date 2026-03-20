@@ -13,14 +13,14 @@ pub fn main() !void {
     var conn = try db.connect();
     defer conn.deinit();
 
-    _ = try conn.exec(
+    _ = try conn.execute(
         \\CREATE TABLE IF NOT EXISTS posts (
         \\    id INTEGER PRIMARY KEY,
         \\    title TEXT NOT NULL
         \\)
     );
 
-    _ = try conn.exec("INSERT INTO posts (title) VALUES ('hello from zig')");
+    _ = try conn.execute("INSERT INTO posts (title) VALUES ('hello from zig')");
 
     var stmt = try conn.prepare("SELECT id, title FROM posts ORDER BY id DESC LIMIT 1");
     defer stmt.deinit();
