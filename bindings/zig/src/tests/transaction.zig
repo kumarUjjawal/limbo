@@ -198,6 +198,35 @@ test "transaction run get query and pragma mirror connection helpers" {
     try tx.rollback();
 }
 
+test "transaction pragmaQuery and pragmaUpdate provide dedicated helpers" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    var tx = try fixture.conn.transaction();
+    defer tx.deinit();
+
+    var initial_rows = try tx.pragmaQuery(std.testing.allocator, "user_version");
+    defer initial_rows.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), initial_rows.len());
+    try std.testing.expect(switch ((try (try initial_rows.row(0)).value(0)).*) {
+        .integer => |value| value == 0,
+        else => false,
+    });
+
+    var updated_rows = try tx.pragmaUpdate(std.testing.allocator, "user_version", "9");
+    defer updated_rows.deinit(std.testing.allocator);
+
+    var queried_rows = try tx.pragmaQuery(std.testing.allocator, "user_version");
+    defer queried_rows.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), queried_rows.len());
+    try std.testing.expect(switch ((try (try queried_rows.row(0)).value(0)).*) {
+        .integer => |value| value == 9,
+        else => false,
+    });
+
+    try tx.rollback();
+}
+
 test "transaction runWith getWith and allWith bind parameters" {
     var fixture = try support.openMemory();
     defer fixture.deinit();

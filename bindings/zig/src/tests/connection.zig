@@ -196,6 +196,30 @@ test "connection run get query and pragma provide convenience helpers" {
     });
 }
 
+test "connection pragmaQuery and pragmaUpdate provide dedicated helpers" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    var initial_rows = try fixture.conn.pragmaQuery(std.testing.allocator, "user_version");
+    defer initial_rows.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), initial_rows.len());
+    try std.testing.expect(switch ((try (try initial_rows.row(0)).value(0)).*) {
+        .integer => |value| value == 0,
+        else => false,
+    });
+
+    var updated_rows = try fixture.conn.pragmaUpdate(std.testing.allocator, "user_version", "7");
+    defer updated_rows.deinit(std.testing.allocator);
+
+    var queried_rows = try fixture.conn.pragmaQuery(std.testing.allocator, "user_version");
+    defer queried_rows.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), queried_rows.len());
+    try std.testing.expect(switch ((try (try queried_rows.row(0)).value(0)).*) {
+        .integer => |value| value == 7,
+        else => false,
+    });
+}
+
 test "connection runWith getWith and allWith bind parameters" {
     var fixture = try support.openMemory();
     defer fixture.deinit();

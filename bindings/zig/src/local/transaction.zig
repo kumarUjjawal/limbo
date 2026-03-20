@@ -238,11 +238,38 @@ pub const Transaction = struct {
         return stmt.allWith(allocator, params);
     }
 
-    /// Executes `PRAGMA {source}` inside the transaction and returns all resulting rows.
-    pub fn pragma(self: *Transaction, allocator: Allocator, source: []const u8) (Allocator.Error || Error)!Rows {
-        const pragma_sql = try std.fmt.allocPrint(std.heap.c_allocator, "PRAGMA {s}", .{source});
+    /// Executes `PRAGMA {name}` inside the transaction and returns all resulting rows.
+    pub fn pragmaQuery(
+        self: *Transaction,
+        allocator: Allocator,
+        name: []const u8,
+    ) (Allocator.Error || Error)!Rows {
+        const pragma_sql = try std.fmt.allocPrint(std.heap.c_allocator, "PRAGMA {s}", .{name});
         defer std.heap.c_allocator.free(pragma_sql);
         return self.all(allocator, pragma_sql);
+    }
+
+    /// Executes `PRAGMA {name} = {value_sql}` inside the transaction and returns all resulting rows.
+    ///
+    /// `value_sql` is inserted verbatim into the generated SQL.
+    pub fn pragmaUpdate(
+        self: *Transaction,
+        allocator: Allocator,
+        name: []const u8,
+        value_sql: []const u8,
+    ) (Allocator.Error || Error)!Rows {
+        const pragma_sql = try std.fmt.allocPrint(
+            std.heap.c_allocator,
+            "PRAGMA {s} = {s}",
+            .{ name, value_sql },
+        );
+        defer std.heap.c_allocator.free(pragma_sql);
+        return self.all(allocator, pragma_sql);
+    }
+
+    /// Executes `PRAGMA {source}` inside the transaction and returns all resulting rows.
+    pub fn pragma(self: *Transaction, allocator: Allocator, source: []const u8) (Allocator.Error || Error)!Rows {
+        return self.pragmaQuery(allocator, source);
     }
 
     /// Commits the transaction.

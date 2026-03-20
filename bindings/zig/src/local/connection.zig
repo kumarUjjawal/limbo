@@ -194,12 +194,40 @@ pub const Connection = struct {
         return stmt.allWith(allocator, params);
     }
 
-    /// Executes `PRAGMA {source}` and returns all resulting rows.
-    pub fn pragma(self: *Connection, allocator: Allocator, source: []const u8) (Allocator.Error || Error)!Rows {
+    /// Executes `PRAGMA {name}` and returns all resulting rows.
+    pub fn pragmaQuery(
+        self: *Connection,
+        allocator: Allocator,
+        name: []const u8,
+    ) (Allocator.Error || Error)!Rows {
         try self.resolvePendingTransaction();
-        const pragma_sql = try std.fmt.allocPrint(std.heap.c_allocator, "PRAGMA {s}", .{source});
+        const pragma_sql = try std.fmt.allocPrint(std.heap.c_allocator, "PRAGMA {s}", .{name});
         defer std.heap.c_allocator.free(pragma_sql);
         return self.all(allocator, pragma_sql);
+    }
+
+    /// Executes `PRAGMA {name} = {value_sql}` and returns all resulting rows.
+    ///
+    /// `value_sql` is inserted verbatim into the generated SQL.
+    pub fn pragmaUpdate(
+        self: *Connection,
+        allocator: Allocator,
+        name: []const u8,
+        value_sql: []const u8,
+    ) (Allocator.Error || Error)!Rows {
+        try self.resolvePendingTransaction();
+        const pragma_sql = try std.fmt.allocPrint(
+            std.heap.c_allocator,
+            "PRAGMA {s} = {s}",
+            .{ name, value_sql },
+        );
+        defer std.heap.c_allocator.free(pragma_sql);
+        return self.all(allocator, pragma_sql);
+    }
+
+    /// Executes `PRAGMA {source}` and returns all resulting rows.
+    pub fn pragma(self: *Connection, allocator: Allocator, source: []const u8) (Allocator.Error || Error)!Rows {
+        return self.pragmaQuery(allocator, source);
     }
 
     /// Begins a new deferred transaction on this connection.
