@@ -2,14 +2,14 @@ const std = @import("std");
 const turso = @import("turso");
 const support = @import("support.zig");
 
-test "sync database create and connect reuse local SQL surface" {
+test "sync low-level database create and connect reuse local SQL surface" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
     const db_path = try support.tempPathAlloc(std.testing.allocator, &tmp_dir, "replica.db");
     defer std.testing.allocator.free(db_path);
 
-    var db = try turso.sync.Database.init(db_path, .{
+    var db = try turso.sync.LowLevelDatabase.init(db_path, .{
         .bootstrap_if_empty = false,
     });
     defer db.deinit();
@@ -45,7 +45,7 @@ test "sync database create and connect reuse local SQL surface" {
 }
 
 fn driveOperationWithDatabase(
-    db: *turso.sync.Database,
+    db: *turso.sync.LowLevelDatabase,
     operation: *turso.sync.Operation,
 ) !void {
     while (true) {
@@ -57,7 +57,7 @@ fn driveOperationWithDatabase(
 }
 
 fn driveOperationManually(
-    db: *turso.sync.Database,
+    db: *turso.sync.LowLevelDatabase,
     operation: *turso.sync.Operation,
     saw_full_write: *bool,
 ) !void {
@@ -86,6 +86,40 @@ fn driveOperationManually(
             .done => return,
         }
     }
+}
+
+test "sync database open and connect reuse local SQL surface" {
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const db_path = try support.tempPathAlloc(std.testing.allocator, &tmp_dir, "blocking-replica.db");
+    defer std.testing.allocator.free(db_path);
+
+    var db = try turso.sync.Database.openWithOptions(db_path, .{
+        .bootstrap_if_empty = false,
+    });
+    defer db.deinit();
+
+    var conn = try db.connect();
+    defer conn.deinit();
+
+    _ = try conn.exec("CREATE TABLE t(x INTEGER)");
+    _ = try conn.exec("INSERT INTO t VALUES (1), (2), (3)");
+
+    var stats = try db.stats(std.testing.allocator);
+    defer stats.deinit(std.testing.allocator);
+    try std.testing.expect(stats.main_wal_size >= 0);
+
+    try db.checkpoint();
+
+    var row = try conn.queryRow(std.testing.allocator, "SELECT COUNT(*) FROM t");
+    defer row.deinit(std.testing.allocator);
+
+    const value = try row.value(0);
+    try std.testing.expect(switch (value.*) {
+        .integer => |count| count == 3,
+        else => false,
+    });
 }
 
 fn processFullRead(item: *turso.sync.IoItem) !void {

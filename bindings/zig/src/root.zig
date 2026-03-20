@@ -78,11 +78,12 @@
 //!
 //! ## Current Limitations
 //!
-//! The primary local API is blocking. Embedded-replica sync is available
-//! through the low-level `turso.sync` namespace, which exposes operations and
-//! IO queue driving directly. Handles must be cleaned up explicitly with
-//! `deinit`, and text/blob row values are copied into owned Zig memory before
-//! being returned to user code.
+//! The primary local and sync APIs are blocking. `turso.sync.Database`
+//! exposes the high-level embedded-replica lifecycle, while
+//! `turso.sync.LowLevelDatabase` keeps the raw operation and IO queue driver
+//! available for advanced integrations. Handles must be cleaned up explicitly
+//! with `deinit`, and text/blob row values are copied into owned Zig memory
+//! before being returned to user code.
 const std = @import("std");
 const c = @import("c.zig").bindings;
 const options = @import("common/options.zig");

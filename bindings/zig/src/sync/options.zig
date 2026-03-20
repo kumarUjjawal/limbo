@@ -1,7 +1,7 @@
 //! Sync configuration types for the Zig binding.
 //!
 //! These mirror the embedded-replica configuration shape used by the other
-//! bindings while keeping the Zig API explicit and low-level.
+//! bindings while keeping the Zig API explicit and blocking.
 const std = @import("std");
 const c = @import("c.zig").bindings;
 
@@ -71,10 +71,13 @@ pub const PartialSyncOptions = struct {
     prefetch: bool = false,
 };
 
-/// Options accepted by `sync.Database.init`.
+/// Options accepted by `sync.Database.openWithOptions` and
+/// `sync.LowLevelDatabase.init`.
 pub const DatabaseOptions = struct {
     /// Optional remote URL (`libsql://`, `https://`, or `http://`).
     remote_url: ?[]const u8 = null,
+    /// Optional bearer token used by the built-in blocking HTTP transport.
+    auth_token: ?[]const u8 = null,
     /// Client name prefix used by the sync engine.
     client_name: []const u8 = default_client_name,
     /// Optional long-poll timeout for `waitChanges`.

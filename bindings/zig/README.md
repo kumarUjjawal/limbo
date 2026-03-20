@@ -6,7 +6,7 @@ The next evolution of SQLite: a high-performance, SQLite-compatible database lib
 
 > **⚠️ Warning:** This software is in BETA. It may still contain bugs and unexpected behavior. Use caution with production data and ensure you have backups.
 
-The Zig binding exposes a blocking local database API plus a low-level embedded-replica sync module. It is built on the shared `sdk-kit/turso.h` and `sync/sdk-kit/turso_sync.h` C ABIs used by the other Turso bindings.
+The Zig binding exposes blocking local and embedded-replica sync APIs. It is built on the shared `sdk-kit/turso.h` and `sync/sdk-kit/turso_sync.h` C ABIs used by the other Turso bindings.
 
 ## Features
 
@@ -17,7 +17,8 @@ The Zig binding exposes a blocking local database API plus a low-level embedded-
 - **Transactions**: Use deferred, immediate, or exclusive transactions with explicit commit and rollback
 - **Single-row queries**: Fetch an owned `Row` with `queryRow` and access values by index or column name
 - **Configurable local open**: Enable experimental features, choose a VFS, or configure encryption with `Database.openWithOptions`
-- **Low-level sync control**: Drive embedded-replica operations and IO explicitly through `turso.sync`
+- **Blocking sync database**: Open an embedded replica, connect to it, and call `push`, `pull`, `stats`, and `checkpoint`
+- **Low-level sync control**: Drop down to `turso.sync.LowLevelDatabase`, `Operation`, and `IoItem` for custom driving
 - **Global setup**: Configure log filtering and callbacks with `turso.setup`
 - **Owned values**: Text and blob row values are copied into owned Zig values
 - **Small surface area**: Focused local API built around `Database`, `Connection`, `Transaction`, `Statement`, `Row`, and `Value`
@@ -27,7 +28,8 @@ The Zig binding exposes a blocking local database API plus a low-level embedded-
 - local database handles for `:memory:` and file-backed paths
 - global setup through `turso.setup`
 - blocking database API
-- low-level embedded-replica sync APIs through `turso.sync`
+- blocking embedded-replica sync APIs through `turso.sync.Database`
+- low-level sync operation and IO queue control through `turso.sync.LowLevelDatabase`
 - configurable local open through `Database.openWithOptions`
 - direct SQL execution with `Connection.exec`
 - multi-statement execution with `Connection.execBatch`
@@ -40,8 +42,7 @@ The Zig binding exposes a blocking local database API plus a low-level embedded-
 
 ## Not Yet Supported
 
-- high-level blocking embedded-replica helpers above `turso.sync`
-- built-in HTTP transport for remote sync requests
+- high-level SQL convenience helpers such as `run`, `get`, `all`, and `pragma`
 - async or non-blocking APIs
 - standalone package publishing
 - cross-target `zig build -Dtarget=...`
@@ -390,7 +391,7 @@ switch (value) {
 - Parameter binding supports positional and named placeholders. Named lookups must include the SQLite prefix such as `:name`, `@name`, `$name`, or `?3`.
 - Column-name lookups on `Statement` and `Row` are ASCII case-insensitive to match the Rust binding.
 - `Connection.execBatch` executes each statement to completion and discards any produced rows.
-- The primary local API is blocking. Sync flows currently use the low-level `turso.sync` operation and IO queue APIs.
+- The primary local and sync APIs are blocking. Advanced sync integrations can drop to `turso.sync.LowLevelDatabase` and the raw operation/IO queue layer.
 - Row text and blob values are copied before being returned to user code.
 
 ## License

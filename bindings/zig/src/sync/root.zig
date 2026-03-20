@@ -1,8 +1,8 @@
-//! Low-level sync module for the Zig binding.
+//! Embedded-replica sync module for the Zig binding.
 //!
-//! This namespace exposes the embedded-replica control flow directly:
-//! create/open operations, IO queue driving, and connection extraction onto the
-//! shared local SQL surface.
+//! `Database` exposes the blocking high-level replica API. The raw operation
+//! and IO queue driver remain available through `LowLevelDatabase`,
+//! `Operation`, and `IoItem` for advanced integrations.
 pub const Changes = @import("changes.zig").Changes;
 pub const Database = @import("database.zig").Database;
 pub const DatabaseOptions = @import("options.zig").DatabaseOptions;
@@ -12,6 +12,7 @@ pub const HttpHandler = @import("http_handler.zig").HttpHandler;
 pub const HttpHeader = @import("io_item.zig").HttpHeader;
 pub const HttpRequest = @import("io_item.zig").HttpRequest;
 pub const IoItem = @import("io_item.zig").IoItem;
+pub const LowLevelDatabase = @import("low_level_database.zig").Database;
 pub const Operation = @import("operation.zig").Operation;
 pub const OperationResult = @import("operation.zig").ResumeResult;
 pub const OperationResultKind = @import("operation.zig").ResultKind;

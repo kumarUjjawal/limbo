@@ -6,7 +6,7 @@ pub const Changes = struct {
     handle: ?*const c.turso_sync_changes_t,
 
     /// Releases the change-set handle unless ownership has been consumed by
-    /// `sync.Database.applyChangesOperation`.
+    /// `sync.LowLevelDatabase.applyChangesOperation`.
     pub fn deinit(self: *Changes) void {
         if (self.handle) |handle| {
             c.turso_sync_changes_deinit(handle);
