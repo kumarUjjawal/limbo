@@ -62,27 +62,27 @@ const std = @import("std");
 const c = @import("c.zig").bindings;
 
 /// A connection to a local Turso database.
-pub const Connection = @import("connection.zig").Connection;
+pub const Connection = @import("local/connection.zig").Connection;
 /// A local Turso database handle.
-pub const Database = @import("database.zig").Database;
+pub const Database = @import("local/database.zig").Database;
 /// Error values returned by the Zig binding.
-pub const Error = @import("error.zig").Error;
+pub const Error = @import("common/error.zig").Error;
 /// Result of preparing the first statement from a SQL string.
-pub const PrepareFirstResult = @import("connection.zig").PrepareFirstResult;
+pub const PrepareFirstResult = @import("local/connection.zig").PrepareFirstResult;
 /// Borrowed value that can be bound to a prepared statement parameter.
-pub const BindValue = @import("statement.zig").BindValue;
+pub const BindValue = @import("local/statement.zig").BindValue;
 /// A prepared SQL statement.
-pub const Statement = @import("statement.zig").Statement;
+pub const Statement = @import("local/statement.zig").Statement;
 /// Result of stepping a prepared statement once.
-pub const StepResult = @import("statement.zig").StepResult;
+pub const StepResult = @import("local/statement.zig").StepResult;
 /// A transaction borrowing a connection handle.
-pub const Transaction = @import("transaction.zig").Transaction;
+pub const Transaction = @import("local/transaction.zig").Transaction;
 /// Transaction begin mode.
-pub const TransactionBehavior = @import("transaction.zig").Behavior;
+pub const TransactionBehavior = @import("local/transaction.zig").Behavior;
 /// A single owned query result row.
-pub const Row = @import("row.zig").Row;
+pub const Row = @import("common/row.zig").Row;
 /// Owned SQLite-compatible value returned by the binding.
-pub const Value = @import("value.zig").Value;
+pub const Value = @import("common/value.zig").Value;
 
 /// Returns the Turso version string reported by the shared SDK.
 pub fn version() []const u8 {

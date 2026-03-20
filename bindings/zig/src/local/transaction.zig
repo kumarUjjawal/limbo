@@ -5,9 +5,9 @@
 //! in `deinit`; if rollback cannot complete immediately, the parent connection
 //! retries it on the next SQL operation.
 const std = @import("std");
-const c = @import("c.zig").bindings;
-const errors = @import("error.zig");
-const Row = @import("row.zig").Row;
+const c = @import("../c.zig").bindings;
+const errors = @import("../common/error.zig");
+const Row = @import("../common/row.zig").Row;
 const Statement = @import("statement.zig").Statement;
 
 const Allocator = std.mem.Allocator;

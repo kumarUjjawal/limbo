@@ -3,10 +3,10 @@
 //! Statements are blocking and exclusive-use. Text and blob values returned by
 //! the current row are copied before being exposed to user code.
 const std = @import("std");
-const c = @import("c.zig").bindings;
-const errors = @import("error.zig");
-const Row = @import("row.zig").Row;
-const Value = @import("value.zig").Value;
+const c = @import("../c.zig").bindings;
+const errors = @import("../common/error.zig");
+const Row = @import("../common/row.zig").Row;
+const Value = @import("../common/value.zig").Value;
 
 const Allocator = std.mem.Allocator;
 const Error = errors.Error;

@@ -3,9 +3,9 @@
 //! Connections are blocking and must be used exclusively. They expose a small
 //! local database API built on top of the shared C ABI.
 const std = @import("std");
-const c = @import("c.zig").bindings;
-const errors = @import("error.zig");
-const Row = @import("row.zig").Row;
+const c = @import("../c.zig").bindings;
+const errors = @import("../common/error.zig");
+const Row = @import("../common/row.zig").Row;
 const Statement = @import("statement.zig").Statement;
 const transaction = @import("transaction.zig");
 

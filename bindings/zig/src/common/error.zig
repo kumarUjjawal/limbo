@@ -2,7 +2,7 @@
 //!
 //! These helpers translate the shared C ABI status model into Zig errors while
 //! preserving the same broad error categories used by the other bindings.
-const c = @import("c.zig").bindings;
+const c = @import("../c.zig").bindings;
 
 /// Error values returned by the Zig binding.
 pub const Error = error{

@@ -3,9 +3,9 @@
 //! A `Database` owns the underlying Turso database handle and can create
 //! exclusive-use connections to it.
 const std = @import("std");
-const c = @import("c.zig").bindings;
+const c = @import("../c.zig").bindings;
 const Connection = @import("connection.zig").Connection;
-const errors = @import("error.zig");
+const errors = @import("../common/error.zig");
 
 const Allocator = std.mem.Allocator;
 const Error = errors.Error;
