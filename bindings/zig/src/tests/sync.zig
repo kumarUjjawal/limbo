@@ -119,6 +119,15 @@ test "sync database open and connect reuse local SQL surface" {
 
     try db.checkpoint();
 
+    var first_row = try conn.queryRowWith(std.testing.allocator, "SELECT x FROM t WHERE id = ?1", .{
+        .positional = &.{.{ .integer = 1 }},
+    });
+    defer first_row.deinit(std.testing.allocator);
+    try std.testing.expect(switch ((try first_row.valueByName("x")).*) {
+        .integer => |count| count == 1,
+        else => false,
+    });
+
     var row = (try conn.getWith(std.testing.allocator, "SELECT x FROM t WHERE id = ?1", .{
         .positional = &.{.{ .integer = 1 }},
     })).?;

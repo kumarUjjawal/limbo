@@ -53,7 +53,18 @@ pub const Statement = struct {
     /// This is primarily useful for statements where rows do not need to be
     /// inspected.
     pub fn execute(self: *Statement) Error!u64 {
-        return self.executeWithIo();
+        return self.executeLoopWithIo();
+    }
+
+    /// Resets the statement, applies `params`, and executes it to completion.
+    ///
+    /// This clears existing bindings before execution and resets the statement
+    /// again before returning so the prepared statement can be reused safely.
+    pub fn executeWith(self: *Statement, params: BindParams) (Allocator.Error || Error)!u64 {
+        try self.reset();
+        defer self.reset() catch {};
+        try self.bindParams(params);
+        return self.execute();
     }
 
     /// Executes the statement and returns result metadata.
@@ -322,6 +333,17 @@ pub const Statement = struct {
         }
     }
 
+    /// Resets the statement, applies `params`, and returns the first row.
+    ///
+    /// This clears existing bindings before execution and resets the statement
+    /// again before returning so the prepared statement can be reused safely.
+    pub fn queryRowWith(self: *Statement, allocator: Allocator, params: BindParams) (Allocator.Error || Error)!Row {
+        try self.reset();
+        defer self.reset() catch {};
+        try self.bindParams(params);
+        return self.queryRow(allocator);
+    }
+
     /// Returns the first row from the current statement, if any.
     ///
     /// Remaining rows are stepped to completion so statement-side effects match
@@ -379,7 +401,7 @@ pub const Statement = struct {
         return self.all(allocator);
     }
 
-    fn executeWithIo(self: *Statement) Error!u64 {
+    fn executeLoopWithIo(self: *Statement) Error!u64 {
         const handle = self.handle orelse return error.Misuse;
         while (true) {
             var rows_changed: u64 = 0;

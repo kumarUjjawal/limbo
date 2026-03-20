@@ -233,3 +233,35 @@ test "connection runWith getWith and allWith bind parameters" {
     defer rows.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 2), rows.len());
 }
+
+test "connection execWith and queryRowWith bind parameters" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+
+    const first_changes = try fixture.conn.execWith("INSERT INTO users (name, age) VALUES (?1, ?2)", .{
+        .positional = &.{
+            .{ .text = "alice" },
+            .{ .integer = 30 },
+        },
+    });
+    try std.testing.expectEqual(@as(u64, 1), first_changes);
+
+    const second_changes = try fixture.conn.execWith("INSERT INTO users (name, age) VALUES (:name, :age)", .{
+        .named = &.{
+            .{ .name = ":name", .value = .{ .text = "bob" } },
+            .{ .name = ":age", .value = .{ .integer = 31 } },
+        },
+    });
+    try std.testing.expectEqual(@as(u64, 1), second_changes);
+
+    var row = try fixture.conn.queryRowWith(std.testing.allocator, "SELECT id, name FROM users WHERE age = :age", .{
+        .named = &.{.{ .name = ":age", .value = .{ .integer = 30 } }},
+    });
+    defer row.deinit(std.testing.allocator);
+    try std.testing.expect(switch ((try row.valueByName("name")).*) {
+        .text => |value| std.mem.eql(u8, value, "alice"),
+        else => false,
+    });
+}

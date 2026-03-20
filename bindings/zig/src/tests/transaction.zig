@@ -183,6 +183,43 @@ test "transaction runWith getWith and allWith bind parameters" {
     try tx.rollback();
 }
 
+test "transaction execWith and queryRowWith bind parameters" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+
+    var tx = try fixture.conn.transaction();
+    defer tx.deinit();
+
+    const first_changes = try tx.execWith("INSERT INTO users (name, age) VALUES (?1, ?2)", .{
+        .positional = &.{
+            .{ .text = "alice" },
+            .{ .integer = 30 },
+        },
+    });
+    try std.testing.expectEqual(@as(u64, 1), first_changes);
+
+    const second_changes = try tx.execWith("INSERT INTO users (name, age) VALUES (:name, :age)", .{
+        .named = &.{
+            .{ .name = ":name", .value = .{ .text = "bob" } },
+            .{ .name = ":age", .value = .{ .integer = 31 } },
+        },
+    });
+    try std.testing.expectEqual(@as(u64, 1), second_changes);
+
+    var row = try tx.queryRowWith(std.testing.allocator, "SELECT id, name FROM users WHERE age = ?1", .{
+        .positional = &.{.{ .integer = 31 }},
+    });
+    defer row.deinit(std.testing.allocator);
+    try std.testing.expect(switch ((try row.valueByName("name")).*) {
+        .text => |value| std.mem.eql(u8, value, "bob"),
+        else => false,
+    });
+
+    try tx.rollback();
+}
+
 fn expectCount(conn: *turso.Connection, expected: i64) !void {
     var stmt = try conn.prepare("SELECT COUNT(*) FROM t");
     defer stmt.deinit();

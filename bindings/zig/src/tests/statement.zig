@@ -382,3 +382,45 @@ test "statement bindParams runWith getWith and allWith support reusable paramete
         else => false,
     });
 }
+
+test "statement executeWith and queryRowWith complete parameterized one-shot APIs" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+
+    var insert = try fixture.conn.prepare("INSERT INTO users (name, age) VALUES (:name, :age)");
+    defer insert.deinit();
+
+    const first_changes = try insert.executeWith(.{
+        .named = &.{
+            .{ .name = ":name", .value = .{ .text = "alice" } },
+            .{ .name = ":age", .value = .{ .integer = 30 } },
+        },
+    });
+    try std.testing.expectEqual(@as(u64, 1), first_changes);
+
+    const second_changes = try insert.executeWith(.{
+        .named = &.{
+            .{ .name = ":name", .value = .{ .text = "bob" } },
+            .{ .name = ":age", .value = .{ .integer = 31 } },
+        },
+    });
+    try std.testing.expectEqual(@as(u64, 1), second_changes);
+
+    var query = try fixture.conn.prepare("SELECT id, name FROM users WHERE age = ?1");
+    defer query.deinit();
+
+    var row = try query.queryRowWith(std.testing.allocator, .{
+        .positional = &.{.{ .integer = 31 }},
+    });
+    defer row.deinit(std.testing.allocator);
+    try std.testing.expect(switch ((try row.valueByName("name")).*) {
+        .text => |value| std.mem.eql(u8, value, "bob"),
+        else => false,
+    });
+
+    try std.testing.expectError(error.QueryReturnedNoRows, query.queryRowWith(std.testing.allocator, .{
+        .positional = &.{.{ .integer = 99 }},
+    }));
+}

@@ -56,6 +56,17 @@ pub const Connection = struct {
         return stmt.execute();
     }
 
+    /// Executes a single SQL statement to completion after applying `params`.
+    ///
+    /// For statements that return rows, use `queryRowWith`, `getWith`, `allWith`,
+    /// or explicit statement stepping instead.
+    pub fn execWith(self: *Connection, sql: []const u8, params: BindParams) (Allocator.Error || Error)!u64 {
+        try self.resolvePendingTransaction();
+        var stmt = try self.prepare(sql);
+        defer stmt.deinit();
+        return stmt.executeWith(params);
+    }
+
     /// Executes a single SQL statement and returns result metadata.
     pub fn run(self: *Connection, sql: []const u8) (Allocator.Error || Error)!RunResult {
         try self.resolvePendingTransaction();
@@ -114,6 +125,18 @@ pub const Connection = struct {
         var stmt = try self.prepare(sql);
         defer stmt.deinit();
         return stmt.queryRow(allocator);
+    }
+
+    /// Returns the first row from `sql` after applying `params` as an owned `Row`.
+    pub fn queryRowWith(
+        self: *Connection,
+        allocator: Allocator,
+        sql: []const u8,
+        params: BindParams,
+    ) (Allocator.Error || Error)!Row {
+        var stmt = try self.prepare(sql);
+        defer stmt.deinit();
+        return stmt.queryRowWith(allocator, params);
     }
 
     /// Returns the first row from `sql`, if any.

@@ -15,7 +15,7 @@ The Zig binding exposes blocking local and embedded-replica sync APIs. It is bui
 - **Prepared statements**: Reuse statements with positional and named parameter binding
 - **Batch execution**: Run multi-statement setup or migration SQL through `Connection.execBatch`
 - **Convenience queries**: Use `run`, `get`, `all`, and `pragma` on `Connection` and `Transaction`, plus `run`, `get`, and `all` on `Statement`
-- **Parameterized helpers**: Pass `BindParams` into `runWith`, `getWith`, and `allWith` without dropping to manual bind calls
+- **Parameterized helpers**: Pass `BindParams` into `execWith`, `queryRowWith`, `runWith`, `getWith`, and `allWith` without dropping to manual bind calls
 - **Transactions**: Use deferred, immediate, or exclusive transactions with explicit commit and rollback
 - **Single-row queries**: Fetch an owned `Row` with `queryRow` and access values by index or column name
 - **Configurable local open**: Enable experimental features, choose a VFS, or configure encryption with `Database.openWithOptions`
@@ -36,7 +36,7 @@ The Zig binding exposes blocking local and embedded-replica sync APIs. It is bui
 - direct SQL execution with `Connection.exec`
 - multi-statement execution with `Connection.execBatch`
 - convenience helpers through `Connection.run`, `Connection.get`, `Connection.all`, `Connection.pragma`, `Transaction.run`, `Transaction.get`, `Transaction.all`, `Transaction.pragma`, `Statement.run`, `Statement.get`, and `Statement.all`
-- parameterized convenience helpers through `BindParams`, `Statement.bindParams`, `Connection.runWith`, `Connection.getWith`, `Connection.allWith`, `Transaction.runWith`, `Transaction.getWith`, `Transaction.allWith`, `Statement.runWith`, `Statement.getWith`, and `Statement.allWith`
+- parameterized convenience helpers through `BindParams`, `Statement.bindParams`, `Statement.executeWith`, `Statement.queryRowWith`, `Statement.runWith`, `Statement.getWith`, `Statement.allWith`, `Connection.execWith`, `Connection.queryRowWith`, `Connection.runWith`, `Connection.getWith`, `Connection.allWith`, `Transaction.execWith`, `Transaction.queryRowWith`, `Transaction.runWith`, `Transaction.getWith`, and `Transaction.allWith`
 - transactions with `Connection.transaction`, `Connection.transactionWithBehavior`, and `Transaction.commit` / `Transaction.rollback`
 - prepared statements with positional and named parameters, including numbered placeholders such as `?1` and `?3`
 - single-row queries through `Connection.queryRow`, `Transaction.queryRow`, and `Statement.queryRow`
@@ -363,6 +363,11 @@ var rows = try conn.allWith(allocator, "SELECT id, name FROM users WHERE age >= 
     .named = &.{.{ .name = ":min_age", .value = .{ .integer = 30 } }},
 });
 defer rows.deinit(allocator);
+
+var first_row = try conn.queryRowWith(allocator, "SELECT id, name FROM users WHERE age = ?1", .{
+    .positional = &.{.{ .integer = 30 }},
+});
+defer first_row.deinit(allocator);
 ```
 
 ### Statement
@@ -403,6 +408,14 @@ defer rows.deinit(allocator);
 Prepared statements also accept shared parameter sets:
 
 ```zig
+var insert_stmt = try conn.prepare("INSERT INTO users (name) VALUES (:name)");
+defer insert_stmt.deinit();
+
+const changes = try insert_stmt.executeWith(.{
+    .named = &.{.{ .name = ":name", .value = .{ .text = "alice" } }},
+});
+_ = changes;
+
 var query_stmt = try conn.prepare("SELECT id, name FROM users WHERE name = :name");
 defer query_stmt.deinit();
 

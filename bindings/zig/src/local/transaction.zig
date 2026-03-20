@@ -83,6 +83,17 @@ pub const Transaction = struct {
         return execOnHandle(handle, self.io_driver, sql);
     }
 
+    /// Executes a single SQL statement inside the transaction after applying `params`.
+    ///
+    /// For statements that return rows, use `queryRowWith`, `getWith`, `allWith`,
+    /// or explicit statement stepping instead.
+    pub fn execWith(self: *Transaction, sql: []const u8, params: BindParams) (Allocator.Error || Error)!u64 {
+        const handle = try self.ensureOpenHandle();
+        var stmt = try prepareSingleOnHandle(handle, self.io_driver, sql);
+        defer stmt.deinit();
+        return stmt.executeWith(params);
+    }
+
     /// Executes a single SQL statement inside the transaction and returns result metadata.
     pub fn run(self: *Transaction, sql: []const u8) (Allocator.Error || Error)!RunResult {
         const handle = try self.ensureOpenHandle();
@@ -128,6 +139,19 @@ pub const Transaction = struct {
         var stmt = try prepareSingleOnHandle(handle, self.io_driver, sql);
         defer stmt.deinit();
         return stmt.queryRow(allocator);
+    }
+
+    /// Returns the first row from `sql` inside the transaction after applying `params`.
+    pub fn queryRowWith(
+        self: *Transaction,
+        allocator: Allocator,
+        sql: []const u8,
+        params: BindParams,
+    ) (Allocator.Error || Error)!Row {
+        const handle = try self.ensureOpenHandle();
+        var stmt = try prepareSingleOnHandle(handle, self.io_driver, sql);
+        defer stmt.deinit();
+        return stmt.queryRowWith(allocator, params);
     }
 
     /// Returns the first row from `sql` inside the transaction, if any.

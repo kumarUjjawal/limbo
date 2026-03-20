@@ -53,8 +53,8 @@
 //! Convenience helpers are available through `Connection.run`, `Connection.get`,
 //! `Connection.all`, `Connection.pragma`, and the matching `Transaction` and
 //! `Statement` methods. Parameterized variants are available through
-//! `BindParams`, `Statement.bindParams`, and the `runWith` / `getWith` /
-//! `allWith` helper family.
+//! `BindParams`, `Statement.bindParams`, and the `executeWith` /
+//! `queryRowWith` / `runWith` / `getWith` / `allWith` helper family.
 //!
 //! Global logging can be configured before opening any database:
 //!
