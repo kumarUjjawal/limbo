@@ -269,7 +269,7 @@ pub const Connection = struct {
         );
         return .{
             .handle = statement,
-            .connection_handle = handle,
+            .connection_handle_slot = &self.handle,
             .io_driver = self.io_driver,
         };
     }
@@ -296,7 +296,7 @@ pub const Connection = struct {
         if (tail_index == 0) {
             var prepared: Statement = .{
                 .handle = statement_handle,
-                .connection_handle = handle,
+                .connection_handle_slot = &self.handle,
                 .io_driver = self.io_driver,
             };
             prepared.deinit();
@@ -306,7 +306,7 @@ pub const Connection = struct {
         return .{
             .statement = .{
                 .handle = statement_handle,
-                .connection_handle = handle,
+                .connection_handle_slot = &self.handle,
                 .io_driver = self.io_driver,
             },
             .tail_index = tail_index,
@@ -345,9 +345,10 @@ fn execTransactionControl(
         error_message,
     );
 
+    var connection_handle_slot: ?*c.turso_connection_t = handle;
     var stmt: Statement = .{
         .handle = statement,
-        .connection_handle = handle,
+        .connection_handle_slot = &connection_handle_slot,
         .io_driver = io_driver,
     };
     defer stmt.deinit();

@@ -34,7 +34,7 @@ pub const BindParams = bind_params.BindParams;
 /// A prepared SQL statement.
 pub const Statement = struct {
     handle: ?*c.turso_statement_t,
-    connection_handle: ?*c.turso_connection_t = null,
+    connection_handle_slot: ?*?*c.turso_connection_t = null,
     io_driver: ?IoDriver = null,
 
     /// Releases the statement handle.
@@ -70,14 +70,12 @@ pub const Statement = struct {
 
     /// Executes the statement and returns result metadata.
     ///
-    /// This discards any produced rows and uses the current statement bindings.
+    /// This discards any produced rows, continues from the current execution
+    /// state using the current bindings, and resets the statement before
+    /// returning so it can be reused safely.
     pub fn run(self: *Statement) Error!RunResult {
-        const connection_handle = self.connection_handle orelse return errors.fail(error.Misuse);
-        const changes = try self.execute();
-        return .{
-            .changes = changes,
-            .last_insert_rowid = c.turso_connection_last_insert_rowid(connection_handle),
-        };
+        defer self.reset() catch {};
+        return self.runCurrent();
     }
 
     /// Resets the statement, applies `params`, and returns result metadata.
@@ -88,7 +86,7 @@ pub const Statement = struct {
         try self.reset();
         defer self.reset() catch {};
         try self.bindParams(params);
-        return self.run();
+        return self.runCurrent();
     }
 
     /// Resets the statement and clears existing bindings.
@@ -447,19 +445,12 @@ pub const Statement = struct {
 
     /// Returns the first row from the current statement as an owned `Row`.
     ///
-    /// Remaining rows are stepped to completion so statement-side effects match
-    /// `execute`.
+    /// Remaining rows are stepped to completion from the current execution state
+    /// so statement-side effects match `execute`, and the statement is reset
+    /// before returning so it can be reused safely.
     pub fn queryRow(self: *Statement, allocator: Allocator) (Allocator.Error || Error)!Row {
-        switch (try self.step()) {
-            .done => return errors.fail(error.QueryReturnedNoRows),
-            .row => {
-                var row = try self.readRowAlloc(allocator);
-                errdefer row.deinit(allocator);
-
-                while (try self.step() == .row) {}
-                return row;
-            },
-        }
+        defer self.reset() catch {};
+        return self.queryRowCurrent(allocator);
     }
 
     /// Resets the statement, applies `params`, and returns the first row.
@@ -470,24 +461,17 @@ pub const Statement = struct {
         try self.reset();
         defer self.reset() catch {};
         try self.bindParams(params);
-        return self.queryRow(allocator);
+        return self.queryRowCurrent(allocator);
     }
 
     /// Returns the first row from the current statement, if any.
     ///
-    /// Remaining rows are stepped to completion so statement-side effects match
-    /// `run`.
+    /// Remaining rows are stepped to completion from the current execution state
+    /// so statement-side effects match `run`, and the statement is reset before
+    /// returning so it can be reused safely.
     pub fn get(self: *Statement, allocator: Allocator) (Allocator.Error || Error)!?Row {
-        switch (try self.step()) {
-            .done => return null,
-            .row => {
-                var row = try self.readRowAlloc(allocator);
-                errdefer row.deinit(allocator);
-
-                while (try self.step() == .row) {}
-                return row;
-            },
-        }
+        defer self.reset() catch {};
+        return self.getCurrent(allocator);
     }
 
     /// Resets the statement, applies `params`, and returns the first row, if any.
@@ -498,13 +482,14 @@ pub const Statement = struct {
         try self.reset();
         defer self.reset() catch {};
         try self.bindParams(params);
-        return self.get(allocator);
+        return self.getCurrent(allocator);
     }
 
     /// Returns every row from the current statement as owned data.
     ///
-    /// The statement uses its current bindings and is left stepped to
-    /// completion.
+    /// The statement continues from its current execution state, uses its
+    /// current bindings, and is reset before returning so it can be reused
+    /// safely.
     pub fn query(self: *Statement, allocator: Allocator) (Allocator.Error || Error)!Rows {
         return self.all(allocator);
     }
@@ -516,9 +501,77 @@ pub const Statement = struct {
 
     /// Returns every row from the current statement as owned data.
     ///
-    /// The statement uses its current bindings and is left stepped to
-    /// completion.
+    /// The statement continues from its current execution state, uses its
+    /// current bindings, and is reset before returning so it can be reused
+    /// safely.
     pub fn all(self: *Statement, allocator: Allocator) (Allocator.Error || Error)!Rows {
+        defer self.reset() catch {};
+        return self.allCurrent(allocator);
+    }
+
+    /// Resets the statement, applies `params`, and returns every row as owned data.
+    ///
+    /// This clears existing bindings before execution and resets the statement
+    /// again before returning so the prepared statement can be reused safely.
+    pub fn allWith(self: *Statement, allocator: Allocator, params: BindParams) (Allocator.Error || Error)!Rows {
+        try self.reset();
+        defer self.reset() catch {};
+        try self.bindParams(params);
+        return self.allCurrent(allocator);
+    }
+
+    fn runCurrent(self: *Statement) Error!RunResult {
+        const connection_handle = try self.currentConnectionHandle();
+        const changes = try self.execute();
+        return .{
+            .changes = changes,
+            .last_insert_rowid = c.turso_connection_last_insert_rowid(connection_handle),
+        };
+    }
+
+    fn queryRowCurrent(self: *Statement, allocator: Allocator) (Allocator.Error || Error)!Row {
+        if (try self.hasCurrentRow()) {
+            var row = try self.readRowAlloc(allocator);
+            errdefer row.deinit(allocator);
+
+            try self.drainRows();
+            return row;
+        }
+
+        switch (try self.step()) {
+            .done => return errors.fail(error.QueryReturnedNoRows),
+            .row => {
+                var row = try self.readRowAlloc(allocator);
+                errdefer row.deinit(allocator);
+
+                try self.drainRows();
+                return row;
+            },
+        }
+    }
+
+    fn getCurrent(self: *Statement, allocator: Allocator) (Allocator.Error || Error)!?Row {
+        if (try self.hasCurrentRow()) {
+            var row = try self.readRowAlloc(allocator);
+            errdefer row.deinit(allocator);
+
+            try self.drainRows();
+            return row;
+        }
+
+        switch (try self.step()) {
+            .done => return null,
+            .row => {
+                var row = try self.readRowAlloc(allocator);
+                errdefer row.deinit(allocator);
+
+                try self.drainRows();
+                return row;
+            },
+        }
+    }
+
+    fn allCurrent(self: *Statement, allocator: Allocator) (Allocator.Error || Error)!Rows {
         const metadata = try self.columnsAlloc(allocator);
         errdefer {
             for (metadata) |*column| {
@@ -535,6 +588,14 @@ pub const Statement = struct {
             rows.deinit(allocator);
         }
 
+        if (try self.hasCurrentRow()) {
+            var row = try self.readRowAlloc(allocator);
+            rows.append(allocator, row) catch |err| {
+                row.deinit(allocator);
+                return err;
+            };
+        }
+
         while (try self.step() == .row) {
             var row = try self.readRowAlloc(allocator);
             rows.append(allocator, row) catch |err| {
@@ -549,15 +610,30 @@ pub const Statement = struct {
         };
     }
 
-    /// Resets the statement, applies `params`, and returns every row as owned data.
-    ///
-    /// This clears existing bindings before execution and resets the statement
-    /// again before returning so the prepared statement can be reused safely.
-    pub fn allWith(self: *Statement, allocator: Allocator, params: BindParams) (Allocator.Error || Error)!Rows {
-        try self.reset();
-        defer self.reset() catch {};
-        try self.bindParams(params);
-        return self.all(allocator);
+    fn currentConnectionHandle(self: *Statement) Error!*c.turso_connection_t {
+        const connection_handle_slot = self.connection_handle_slot orelse return errors.fail(error.Misuse);
+        return connection_handle_slot.* orelse return errors.fail(error.Misuse);
+    }
+
+    fn hasCurrentRow(self: *Statement) Error!bool {
+        const handle = self.handle orelse return errors.fail(error.Misuse);
+        if (try self.columnCount() == 0) {
+            return false;
+        }
+
+        return switch (c.turso_statement_row_value_kind(handle, 0)) {
+            c.TURSO_TYPE_NULL,
+            c.TURSO_TYPE_INTEGER,
+            c.TURSO_TYPE_REAL,
+            c.TURSO_TYPE_TEXT,
+            c.TURSO_TYPE_BLOB,
+            => true,
+            else => false,
+        };
+    }
+
+    fn drainRows(self: *Statement) Error!void {
+        while (try self.step() == .row) {}
     }
 
     fn executeLoopWithIo(self: *Statement) Error!u64 {

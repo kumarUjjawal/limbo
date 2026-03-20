@@ -321,6 +321,21 @@ test "statement typed read helpers reject mismatched types" {
     try std.testing.expectError(error.Misuse, stmt.readIntByName("txt"));
 }
 
+test "statement run rejects closed parent connection" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+
+    var stmt = try fixture.conn.prepare("INSERT INTO users (name) VALUES (?1)");
+    defer stmt.deinit();
+
+    try stmt.bindText(1, "alice");
+    fixture.conn.deinit();
+
+    try std.testing.expectError(error.Misuse, stmt.run());
+}
+
 fn freeNameList(allocator: std.mem.Allocator, names: [][]u8) void {
     for (names) |name| {
         allocator.free(name);
@@ -335,7 +350,7 @@ fn freeColumns(allocator: std.mem.Allocator, columns: []turso.Column) void {
     allocator.free(columns);
 }
 
-test "statement queryRow returns first row and drains remaining rows" {
+test "statement queryRow uses current row and resets for reuse" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
@@ -348,6 +363,8 @@ test "statement queryRow returns first row and drains remaining rows" {
     var stmt = try fixture.conn.prepare("SELECT id, name FROM users ORDER BY id");
     defer stmt.deinit();
 
+    try std.testing.expectEqual(turso.StepResult.row, try stmt.step());
+
     var row = try stmt.queryRow(std.testing.allocator);
     defer row.deinit(std.testing.allocator);
 
@@ -357,7 +374,94 @@ test "statement queryRow returns first row and drains remaining rows" {
         else => false,
     });
 
-    try std.testing.expectEqual(turso.StepResult.done, try stmt.step());
+    var row_again = try stmt.queryRow(std.testing.allocator);
+    defer row_again.deinit(std.testing.allocator);
+    try std.testing.expect(switch ((try row_again.valueByName("id")).*) {
+        .integer => |value| value == 1,
+        else => false,
+    });
+}
+
+test "statement get and all use current row when already stepped" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.execute("CREATE TABLE users (id INTEGER, name TEXT)");
+    try fixture.conn.executeBatch(
+        \\INSERT INTO users VALUES (1, 'alice');
+        \\INSERT INTO users VALUES (2, 'bob');
+    );
+
+    var get_stmt = try fixture.conn.prepare("SELECT id, name FROM users ORDER BY id");
+    defer get_stmt.deinit();
+    try std.testing.expectEqual(turso.StepResult.row, try get_stmt.step());
+
+    var row = (try get_stmt.get(std.testing.allocator)).?;
+    defer row.deinit(std.testing.allocator);
+    try std.testing.expect(switch ((try row.valueByName("id")).*) {
+        .integer => |value| value == 1,
+        else => false,
+    });
+
+    var all_stmt = try fixture.conn.prepare("SELECT id, name FROM users ORDER BY id");
+    defer all_stmt.deinit();
+    try std.testing.expectEqual(turso.StepResult.row, try all_stmt.step());
+
+    var rows = try all_stmt.all(std.testing.allocator);
+    defer rows.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 2), rows.len());
+    try std.testing.expect(switch ((try (try rows.row(0)).valueByName("name")).*) {
+        .text => |value| std.mem.eql(u8, value, "alice"),
+        else => false,
+    });
+    try std.testing.expect(switch ((try (try rows.row(1)).valueByName("name")).*) {
+        .text => |value| std.mem.eql(u8, value, "bob"),
+        else => false,
+    });
+}
+
+test "statement helpers keep buffered NULL-leading rows" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    var query_stmt = try fixture.conn.prepare(
+        \\SELECT NULL AS id, 'alice' AS name
+        \\UNION ALL
+        \\SELECT 1 AS id, 'bob' AS name
+    );
+    defer query_stmt.deinit();
+    try std.testing.expectEqual(turso.StepResult.row, try query_stmt.step());
+
+    var row = try query_stmt.queryRow(std.testing.allocator);
+    defer row.deinit(std.testing.allocator);
+    try std.testing.expect(switch ((try row.valueByName("id")).*) {
+        .null => true,
+        else => false,
+    });
+    try std.testing.expect(switch ((try row.valueByName("name")).*) {
+        .text => |value| std.mem.eql(u8, value, "alice"),
+        else => false,
+    });
+
+    var all_stmt = try fixture.conn.prepare(
+        \\SELECT NULL AS id, 'alice' AS name
+        \\UNION ALL
+        \\SELECT 1 AS id, 'bob' AS name
+    );
+    defer all_stmt.deinit();
+    try std.testing.expectEqual(turso.StepResult.row, try all_stmt.step());
+
+    var rows = try all_stmt.all(std.testing.allocator);
+    defer rows.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 2), rows.len());
+    try std.testing.expect(switch ((try (try rows.row(0)).valueByName("id")).*) {
+        .null => true,
+        else => false,
+    });
+    try std.testing.expect(switch ((try (try rows.row(0)).valueByName("name")).*) {
+        .text => |value| std.mem.eql(u8, value, "alice"),
+        else => false,
+    });
 }
 
 test "statement queryRow returns QueryReturnedNoRows for empty results" {
@@ -386,7 +490,6 @@ test "statement run get and query provide convenience helpers" {
     try std.testing.expectEqual(@as(u64, 1), first_insert.changes);
     try std.testing.expectEqual(@as(i64, 1), first_insert.last_insert_rowid);
 
-    try insert.reset();
     try insert.bindText(1, "bob");
     const second_insert = try insert.run();
     try std.testing.expectEqual(@as(u64, 1), second_insert.changes);
@@ -403,6 +506,13 @@ test "statement run get and query provide convenience helpers" {
         else => false,
     });
 
+    var row_again = (try get_stmt.get(std.testing.allocator)).?;
+    defer row_again.deinit(std.testing.allocator);
+    try std.testing.expect(switch ((try row_again.valueByName("id")).*) {
+        .integer => |value| value == 1,
+        else => false,
+    });
+
     var empty_stmt = try fixture.conn.prepare("SELECT id FROM users WHERE 0");
     defer empty_stmt.deinit();
     try std.testing.expect((try empty_stmt.get(std.testing.allocator)) == null);
@@ -415,6 +525,14 @@ test "statement run get and query provide convenience helpers" {
     try std.testing.expectEqual(@as(usize, 2), rows.len());
     try std.testing.expect(switch ((try (try rows.row(1)).valueByName("name")).*) {
         .text => |value| std.mem.eql(u8, value, "bob"),
+        else => false,
+    });
+
+    var rows_again = try all_stmt.query(std.testing.allocator);
+    defer rows_again.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 2), rows_again.len());
+    try std.testing.expect(switch ((try (try rows_again.row(0)).valueByName("name")).*) {
+        .text => |value| std.mem.eql(u8, value, "alice"),
         else => false,
     });
 }
