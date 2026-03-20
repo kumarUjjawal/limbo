@@ -7,6 +7,8 @@ const c = @import("../c.zig").bindings;
 const errors = @import("../common/error.zig");
 const IoDriver = @import("../common/io_driver.zig").IoDriver;
 const Row = @import("../common/row.zig").Row;
+const Rows = @import("../common/rows.zig").Rows;
+const RunResult = @import("../common/run_result.zig").RunResult;
 const Statement = @import("statement.zig").Statement;
 const transaction = @import("transaction.zig");
 
@@ -53,6 +55,14 @@ pub const Connection = struct {
         return stmt.execute();
     }
 
+    /// Executes a single SQL statement and returns result metadata.
+    pub fn run(self: *Connection, sql: []const u8) (Allocator.Error || Error)!RunResult {
+        try self.resolvePendingTransaction();
+        var stmt = try self.prepare(sql);
+        defer stmt.deinit();
+        return stmt.run();
+    }
+
     /// Executes every statement found in `sql`.
     ///
     /// This is intended for DDL or script-style setup. Statements that produce
@@ -97,6 +107,28 @@ pub const Connection = struct {
         return stmt.queryRow(allocator);
     }
 
+    /// Returns the first row from `sql`, if any.
+    pub fn get(self: *Connection, allocator: Allocator, sql: []const u8) (Allocator.Error || Error)!?Row {
+        var stmt = try self.prepare(sql);
+        defer stmt.deinit();
+        return stmt.get(allocator);
+    }
+
+    /// Returns every row from `sql` as owned data.
+    pub fn all(self: *Connection, allocator: Allocator, sql: []const u8) (Allocator.Error || Error)!Rows {
+        var stmt = try self.prepare(sql);
+        defer stmt.deinit();
+        return stmt.all(allocator);
+    }
+
+    /// Executes `PRAGMA {source}` and returns all resulting rows.
+    pub fn pragma(self: *Connection, allocator: Allocator, source: []const u8) (Allocator.Error || Error)!Rows {
+        try self.resolvePendingTransaction();
+        const pragma_sql = try std.fmt.allocPrint(std.heap.c_allocator, "PRAGMA {s}", .{source});
+        defer std.heap.c_allocator.free(pragma_sql);
+        return self.all(allocator, pragma_sql);
+    }
+
     /// Begins a new deferred transaction on this connection.
     ///
     /// Unfinished transactions roll back in `Transaction.deinit`.
@@ -136,6 +168,7 @@ pub const Connection = struct {
         );
         return .{
             .handle = statement,
+            .connection_handle = handle,
             .io_driver = self.io_driver,
         };
     }
@@ -162,6 +195,7 @@ pub const Connection = struct {
         if (tail_index == 0) {
             var prepared: Statement = .{
                 .handle = statement_handle,
+                .connection_handle = handle,
                 .io_driver = self.io_driver,
             };
             prepared.deinit();
@@ -171,6 +205,7 @@ pub const Connection = struct {
         return .{
             .statement = .{
                 .handle = statement_handle,
+                .connection_handle = handle,
                 .io_driver = self.io_driver,
             },
             .tail_index = tail_index,
@@ -202,6 +237,7 @@ fn execRollback(handle: *c.turso_connection_t, io_driver: ?IoDriver) (Allocator.
 
     var stmt: Statement = .{
         .handle = statement,
+        .connection_handle = handle,
         .io_driver = io_driver,
     };
     defer stmt.deinit();

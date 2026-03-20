@@ -7,6 +7,8 @@ const c = @import("../c.zig").bindings;
 const errors = @import("../common/error.zig");
 const IoDriver = @import("../common/io_driver.zig").IoDriver;
 const Row = @import("../common/row.zig").Row;
+const Rows = @import("../common/rows.zig").Rows;
+const RunResult = @import("../common/run_result.zig").RunResult;
 const Value = @import("../common/value.zig").Value;
 
 const Allocator = std.mem.Allocator;
@@ -32,6 +34,7 @@ pub const BindValue = union(enum) {
 /// A prepared SQL statement.
 pub const Statement = struct {
     handle: ?*c.turso_statement_t,
+    connection_handle: ?*c.turso_connection_t = null,
     io_driver: ?IoDriver = null,
 
     /// Releases the statement handle.
@@ -52,6 +55,18 @@ pub const Statement = struct {
     /// inspected.
     pub fn execute(self: *Statement) Error!u64 {
         return self.executeWithIo();
+    }
+
+    /// Executes the statement and returns result metadata.
+    ///
+    /// This discards any produced rows and uses the current statement bindings.
+    pub fn run(self: *Statement) Error!RunResult {
+        const connection_handle = self.connection_handle orelse return error.Misuse;
+        const changes = try self.execute();
+        return .{
+            .changes = changes,
+            .last_insert_rowid = c.turso_connection_last_insert_rowid(connection_handle),
+        };
     }
 
     /// Resets the statement and clears existing bindings.
@@ -290,6 +305,41 @@ pub const Statement = struct {
                 return row;
             },
         }
+    }
+
+    /// Returns the first row from the current statement, if any.
+    ///
+    /// Remaining rows are stepped to completion so statement-side effects match
+    /// `run`.
+    pub fn get(self: *Statement, allocator: Allocator) (Allocator.Error || Error)!?Row {
+        return self.queryRow(allocator) catch |err| switch (err) {
+            error.QueryReturnedNoRows => null,
+            else => |other| return other,
+        };
+    }
+
+    /// Returns every row from the current statement as owned data.
+    ///
+    /// The statement uses its current bindings and is left stepped to
+    /// completion.
+    pub fn all(self: *Statement, allocator: Allocator) (Allocator.Error || Error)!Rows {
+        var rows = std.ArrayList(Row).empty;
+        errdefer {
+            for (rows.items) |*row| {
+                row.deinit(allocator);
+            }
+            rows.deinit(allocator);
+        }
+
+        while (try self.step() == .row) {
+            var row = try self.readRowAlloc(allocator);
+            rows.append(allocator, row) catch |err| {
+                row.deinit(allocator);
+                return err;
+            };
+        }
+
+        return .{ .items = try rows.toOwnedSlice(allocator) };
     }
 
     fn executeWithIo(self: *Statement) Error!u64 {

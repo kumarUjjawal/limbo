@@ -110,6 +110,37 @@ test "transaction behavior export is available" {
     try std.testing.expectEqual(turso.TransactionBehavior.deferred, behavior);
 }
 
+test "transaction run get all and pragma mirror connection helpers" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
+
+    var tx = try fixture.conn.transaction();
+    defer tx.deinit();
+
+    const insert_result = try tx.run("INSERT INTO users (name) VALUES ('alice')");
+    try std.testing.expectEqual(@as(u64, 1), insert_result.changes);
+    try std.testing.expectEqual(@as(i64, 1), insert_result.last_insert_rowid);
+
+    var row = (try tx.get(std.testing.allocator, "SELECT id, name FROM users")).?;
+    defer row.deinit(std.testing.allocator);
+    try std.testing.expect(switch ((try row.valueByName("name")).*) {
+        .text => |value| std.mem.eql(u8, value, "alice"),
+        else => false,
+    });
+
+    var rows = try tx.all(std.testing.allocator, "SELECT id, name FROM users");
+    defer rows.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), rows.len());
+
+    var pragma_rows = try tx.pragma(std.testing.allocator, "user_version");
+    defer pragma_rows.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), pragma_rows.len());
+
+    try tx.rollback();
+}
+
 fn expectCount(conn: *turso.Connection, expected: i64) !void {
     var stmt = try conn.prepare("SELECT COUNT(*) FROM t");
     defer stmt.deinit();

@@ -282,3 +282,50 @@ test "statement queryRow returns QueryReturnedNoRows for empty results" {
 
     try std.testing.expectError(error.QueryReturnedNoRows, stmt.queryRow(std.testing.allocator));
 }
+
+test "statement run get and all provide convenience helpers" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)");
+
+    var insert = try fixture.conn.prepare("INSERT INTO users (name) VALUES (?1)");
+    defer insert.deinit();
+
+    try insert.bindText(1, "alice");
+    const first_insert = try insert.run();
+    try std.testing.expectEqual(@as(u64, 1), first_insert.changes);
+    try std.testing.expectEqual(@as(i64, 1), first_insert.last_insert_rowid);
+
+    try insert.reset();
+    try insert.bindText(1, "bob");
+    const second_insert = try insert.run();
+    try std.testing.expectEqual(@as(u64, 1), second_insert.changes);
+    try std.testing.expectEqual(@as(i64, 2), second_insert.last_insert_rowid);
+
+    var get_stmt = try fixture.conn.prepare("SELECT id, name FROM users WHERE name = 'alice'");
+    defer get_stmt.deinit();
+
+    var row = (try get_stmt.get(std.testing.allocator)).?;
+    defer row.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 2), row.columnCount());
+    try std.testing.expect(switch ((try row.valueByName("id")).*) {
+        .integer => |value| value == 1,
+        else => false,
+    });
+
+    var empty_stmt = try fixture.conn.prepare("SELECT id FROM users WHERE 0");
+    defer empty_stmt.deinit();
+    try std.testing.expect((try empty_stmt.get(std.testing.allocator)) == null);
+
+    var all_stmt = try fixture.conn.prepare("SELECT id, name FROM users ORDER BY id");
+    defer all_stmt.deinit();
+
+    var rows = try all_stmt.all(std.testing.allocator);
+    defer rows.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 2), rows.len());
+    try std.testing.expect(switch ((try (try rows.row(1)).valueByName("name")).*) {
+        .text => |value| std.mem.eql(u8, value, "bob"),
+        else => false,
+    });
+}

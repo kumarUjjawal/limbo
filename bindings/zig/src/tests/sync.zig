@@ -103,8 +103,9 @@ test "sync database open and connect reuse local SQL surface" {
     var conn = try db.connect();
     defer conn.deinit();
 
-    _ = try conn.exec("CREATE TABLE t(x INTEGER)");
-    _ = try conn.exec("INSERT INTO t VALUES (1), (2), (3)");
+    _ = try conn.exec("CREATE TABLE t(id INTEGER PRIMARY KEY, x INTEGER)");
+
+    _ = try conn.run("INSERT INTO t (x) VALUES (1), (2), (3)");
 
     var stats = try db.stats(std.testing.allocator);
     defer stats.deinit(std.testing.allocator);
@@ -112,11 +113,17 @@ test "sync database open and connect reuse local SQL surface" {
 
     try db.checkpoint();
 
-    var row = try conn.queryRow(std.testing.allocator, "SELECT COUNT(*) FROM t");
+    var row = (try conn.get(std.testing.allocator, "SELECT x FROM t ORDER BY id LIMIT 1")).?;
     defer row.deinit(std.testing.allocator);
+    try std.testing.expect(switch ((try row.valueByName("x")).*) {
+        .integer => |count| count == 1,
+        else => false,
+    });
 
-    const value = try row.value(0);
-    try std.testing.expect(switch (value.*) {
+    var rows = try conn.all(std.testing.allocator, "SELECT x FROM t ORDER BY id");
+    defer rows.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 3), rows.len());
+    try std.testing.expect(switch ((try (try rows.row(2)).valueByName("x")).*) {
         .integer => |count| count == 3,
         else => false,
     });

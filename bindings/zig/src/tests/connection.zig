@@ -155,3 +155,43 @@ test "connection execBatch drains row-producing statements and continues" {
         else => false,
     });
 }
+
+test "connection run get all and pragma provide convenience helpers" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
+
+    const first_insert = try fixture.conn.run("INSERT INTO users (name) VALUES ('alice')");
+    try std.testing.expectEqual(@as(u64, 1), first_insert.changes);
+    try std.testing.expectEqual(@as(i64, 1), first_insert.last_insert_rowid);
+
+    const second_insert = try fixture.conn.run("INSERT INTO users (name) VALUES ('bob')");
+    try std.testing.expectEqual(@as(u64, 1), second_insert.changes);
+    try std.testing.expectEqual(@as(i64, 2), second_insert.last_insert_rowid);
+
+    var first_row = (try fixture.conn.get(std.testing.allocator, "SELECT id, name FROM users ORDER BY id LIMIT 1")).?;
+    defer first_row.deinit(std.testing.allocator);
+    try std.testing.expect(switch ((try first_row.valueByName("name")).*) {
+        .text => |value| std.mem.eql(u8, value, "alice"),
+        else => false,
+    });
+
+    try std.testing.expect((try fixture.conn.get(std.testing.allocator, "SELECT id FROM users WHERE 0")) == null);
+
+    var rows = try fixture.conn.all(std.testing.allocator, "SELECT id, name FROM users ORDER BY id");
+    defer rows.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 2), rows.len());
+    try std.testing.expect(switch ((try (try rows.row(1)).valueByName("id")).*) {
+        .integer => |value| value == 2,
+        else => false,
+    });
+
+    var pragma_rows = try fixture.conn.pragma(std.testing.allocator, "user_version");
+    defer pragma_rows.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), pragma_rows.len());
+    try std.testing.expect(switch ((try (try pragma_rows.row(0)).value(0)).*) {
+        .integer => |value| value == 0,
+        else => false,
+    });
+}

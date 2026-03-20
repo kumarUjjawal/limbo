@@ -21,6 +21,8 @@ test {
     _ = turso.LogLevel;
     _ = turso.Logger;
     _ = turso.Row;
+    _ = turso.Rows;
+    _ = turso.RunResult;
     _ = turso.SetupOptions;
     _ = turso.Value;
     _ = turso.Error;

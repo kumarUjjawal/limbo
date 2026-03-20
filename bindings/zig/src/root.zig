@@ -50,8 +50,9 @@
 //! Transactions are available through `Connection.transaction` and
 //! `Connection.transactionWithBehavior`.
 //!
-//! Single-row query ergonomics are available through `Connection.queryRow`,
-//! `Transaction.queryRow`, and `Statement.queryRow`.
+//! Convenience helpers are available through `Connection.run`, `Connection.get`,
+//! `Connection.all`, `Connection.pragma`, and the matching `Transaction` and
+//! `Statement` methods.
 //!
 //! Global logging can be configured before opening any database:
 //!
@@ -127,6 +128,10 @@ pub const Transaction = @import("local/transaction.zig").Transaction;
 pub const TransactionBehavior = @import("local/transaction.zig").Behavior;
 /// A single owned query result row.
 pub const Row = @import("common/row.zig").Row;
+/// An owned list of query result rows.
+pub const Rows = @import("common/rows.zig").Rows;
+/// Result metadata returned by `run` helpers.
+pub const RunResult = @import("common/run_result.zig").RunResult;
 /// Owned SQLite-compatible value returned by the binding.
 pub const Value = @import("common/value.zig").Value;
 

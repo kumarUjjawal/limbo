@@ -14,6 +14,7 @@ The Zig binding exposes blocking local and embedded-replica sync APIs. It is bui
 - **In-process**: No network overhead, runs directly in your application
 - **Prepared statements**: Reuse statements with positional and named parameter binding
 - **Batch execution**: Run multi-statement setup or migration SQL through `Connection.execBatch`
+- **Convenience queries**: Use `run`, `get`, `all`, and `pragma` on `Connection` and `Transaction`, plus `run`, `get`, and `all` on `Statement`
 - **Transactions**: Use deferred, immediate, or exclusive transactions with explicit commit and rollback
 - **Single-row queries**: Fetch an owned `Row` with `queryRow` and access values by index or column name
 - **Configurable local open**: Enable experimental features, choose a VFS, or configure encryption with `Database.openWithOptions`
@@ -33,6 +34,7 @@ The Zig binding exposes blocking local and embedded-replica sync APIs. It is bui
 - configurable local open through `Database.openWithOptions`
 - direct SQL execution with `Connection.exec`
 - multi-statement execution with `Connection.execBatch`
+- convenience helpers through `Connection.run`, `Connection.get`, `Connection.all`, `Connection.pragma`, `Transaction.run`, `Transaction.get`, `Transaction.all`, `Transaction.pragma`, `Statement.run`, `Statement.get`, and `Statement.all`
 - transactions with `Connection.transaction`, `Connection.transactionWithBehavior`, and `Transaction.commit` / `Transaction.rollback`
 - prepared statements with positional and named parameters, including numbered placeholders such as `?1` and `?3`
 - single-row queries through `Connection.queryRow`, `Transaction.queryRow`, and `Statement.queryRow`
@@ -42,7 +44,6 @@ The Zig binding exposes blocking local and embedded-replica sync APIs. It is bui
 
 ## Not Yet Supported
 
-- high-level SQL convenience helpers such as `run`, `get`, `all`, and `pragma`
 - async or non-blocking APIs
 - standalone package publishing
 - cross-target `zig build -Dtarget=...`
@@ -322,6 +323,24 @@ const rowid = try conn.lastInsertRowId();
 _ = .{ autocommit, rowid };
 ```
 
+Convenience helpers are available for common one-shot queries:
+
+```zig
+const insert_result = try conn.run("INSERT INTO users (name) VALUES ('alice')");
+_ = insert_result;
+
+if (try conn.get(allocator, "SELECT id, name FROM users ORDER BY id LIMIT 1")) |row_value| {
+    var row = row_value;
+    defer row.deinit(allocator);
+}
+
+var rows = try conn.all(allocator, "SELECT id, name FROM users ORDER BY id");
+defer rows.deinit(allocator);
+
+var pragma_rows = try conn.pragma(allocator, "user_version");
+defer pragma_rows.deinit(allocator);
+```
+
 ### Statement
 
 Bind values, step through rows, and read owned results:
@@ -336,6 +355,25 @@ while (try stmt.step() == .row) {
     var value = try stmt.readValueAlloc(allocator, 0);
     defer value.deinit(allocator);
 }
+```
+
+Prepared statements also support convenience execution with their current bindings:
+
+```zig
+var insert_stmt = try conn.prepare("INSERT INTO users (name) VALUES (?1)");
+defer insert_stmt.deinit();
+
+try insert_stmt.bindText(1, "alice");
+const insert_result = try insert_stmt.run();
+_ = insert_result;
+
+try insert_stmt.reset();
+
+var query_stmt = try conn.prepare("SELECT id, name FROM users ORDER BY id");
+defer query_stmt.deinit();
+
+var rows = try query_stmt.all(allocator);
+defer rows.deinit(allocator);
 ```
 
 ### Transaction
@@ -391,6 +429,7 @@ switch (value) {
 - Parameter binding supports positional and named placeholders. Named lookups must include the SQLite prefix such as `:name`, `@name`, `$name`, or `?3`.
 - Column-name lookups on `Statement` and `Row` are ASCII case-insensitive to match the Rust binding.
 - `Connection.execBatch` executes each statement to completion and discards any produced rows.
+- `Connection.get`, `Connection.all`, `Connection.pragma`, `Transaction.get`, `Transaction.all`, and the matching statement helpers return owned rows that must be cleaned up with `deinit`.
 - The primary local and sync APIs are blocking. Advanced sync integrations can drop to `turso.sync.LowLevelDatabase` and the raw operation/IO queue layer.
 - Row text and blob values are copied before being returned to user code.
 
