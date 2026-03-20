@@ -66,6 +66,46 @@ test "transaction deinit rolls back unfinished work" {
     try expectCount(&fixture.conn, 0);
 }
 
+test "transaction deinit can commit unfinished work" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.execute("CREATE TABLE t (x INTEGER)");
+
+    {
+        var tx = try fixture.conn.transaction();
+        defer tx.deinit();
+
+        _ = try tx.execute("INSERT INTO t VALUES (1)");
+        tx.setDropBehavior(.commit);
+    }
+
+    try std.testing.expect(try fixture.conn.isAutocommit());
+    try expectCount(&fixture.conn, 1);
+}
+
+test "transaction deinit can ignore unfinished work" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.execute("CREATE TABLE t (x INTEGER)");
+
+    {
+        var tx = try fixture.conn.transaction();
+        defer tx.deinit();
+
+        _ = try tx.execute("INSERT INTO t VALUES (1)");
+        tx.setDropBehavior(.ignore);
+    }
+
+    try std.testing.expect(!(try fixture.conn.isAutocommit()));
+    try expectCount(&fixture.conn, 1);
+
+    _ = try fixture.conn.execute("ROLLBACK");
+    try std.testing.expect(try fixture.conn.isAutocommit());
+    try expectCount(&fixture.conn, 0);
+}
+
 test "transaction methods reject use after finish" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
@@ -108,6 +148,23 @@ test "transaction queryRow sees in-flight changes" {
 test "transaction behavior export is available" {
     const behavior: turso.TransactionBehavior = .deferred;
     try std.testing.expectEqual(turso.TransactionBehavior.deferred, behavior);
+
+    var tx_drop_behavior: turso.TransactionDropBehavior = .rollback;
+    try std.testing.expectEqual(turso.TransactionDropBehavior.rollback, tx_drop_behavior);
+    tx_drop_behavior = .commit;
+    try std.testing.expectEqual(turso.TransactionDropBehavior.commit, tx_drop_behavior);
+}
+
+test "transaction drop behavior getter and setter round-trip" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    var tx = try fixture.conn.transaction();
+    defer tx.rollback() catch {};
+
+    try std.testing.expectEqual(turso.TransactionDropBehavior.rollback, tx.dropBehavior());
+    tx.setDropBehavior(.ignore);
+    try std.testing.expectEqual(turso.TransactionDropBehavior.ignore, tx.dropBehavior());
 }
 
 test "transaction run get query and pragma mirror connection helpers" {

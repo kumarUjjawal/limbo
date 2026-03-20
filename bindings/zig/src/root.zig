@@ -140,6 +140,8 @@ pub const sync = @import("sync/root.zig");
 pub const Transaction = @import("local/transaction.zig").Transaction;
 /// Transaction begin mode.
 pub const TransactionBehavior = @import("local/transaction.zig").Behavior;
+/// Cleanup behavior used when a transaction is dropped unfinished.
+pub const TransactionDropBehavior = @import("local/transaction.zig").DropBehavior;
 /// A single owned query result row.
 pub const Row = @import("common/row.zig").Row;
 /// An owned list of query result rows.

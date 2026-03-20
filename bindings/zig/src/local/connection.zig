@@ -204,7 +204,7 @@ pub const Connection = struct {
 
     /// Begins a new deferred transaction on this connection.
     ///
-    /// Unfinished transactions roll back in `Transaction.deinit`.
+    /// Unfinished transactions default to rollback in `Transaction.deinit`.
     pub fn transaction(self: *Connection) (Allocator.Error || Error)!Transaction {
         return self.transactionWithBehavior(.deferred);
     }
@@ -290,15 +290,24 @@ pub const Connection = struct {
             .none => {},
             .rollback => {
                 const handle = self.handle orelse return errors.fail(error.Misuse);
-                _ = try execRollback(handle, self.io_driver);
+                _ = try execTransactionControl(handle, self.io_driver, "ROLLBACK");
+                self.pending_tx_action = .none;
+            },
+            .commit => {
+                const handle = self.handle orelse return errors.fail(error.Misuse);
+                _ = try execTransactionControl(handle, self.io_driver, "COMMIT");
                 self.pending_tx_action = .none;
             },
         }
     }
 };
 
-fn execRollback(handle: *c.turso_connection_t, io_driver: ?IoDriver) (Allocator.Error || Error)!u64 {
-    const sql_z = try std.heap.c_allocator.dupeZ(u8, "ROLLBACK");
+fn execTransactionControl(
+    handle: *c.turso_connection_t,
+    io_driver: ?IoDriver,
+    sql: []const u8,
+) (Allocator.Error || Error)!u64 {
+    const sql_z = try std.heap.c_allocator.dupeZ(u8, sql);
     defer std.heap.c_allocator.free(sql_z);
 
     var statement: ?*c.turso_statement_t = null;

@@ -26,6 +26,7 @@ const PreparedSlice = struct {
 pub const PendingAction = enum {
     none,
     rollback,
+    commit,
 };
 
 /// Transaction begin mode.
@@ -43,18 +44,27 @@ pub const Behavior = enum {
     }
 };
 
+/// Cleanup behavior used when a transaction is dropped unfinished.
+pub const DropBehavior = enum {
+    rollback,
+    commit,
+    ignore,
+    panic,
+};
+
 /// A transaction borrowing a connection handle.
 pub const Transaction = struct {
     connection_handle: *?*c.turso_connection_t,
     pending_action: *PendingAction,
     io_driver: ?IoDriver = null,
+    drop_behavior: DropBehavior = .rollback,
     open: bool = true,
 
     /// Cleans up the transaction.
     ///
-    /// If the transaction is still open, this attempts to roll it back
-    /// immediately. When rollback cannot complete during cleanup, the parent
-    /// connection retries it before the next SQL operation.
+    /// If the transaction is still open, this applies the configured drop
+    /// behavior immediately. When cleanup cannot complete during `deinit`, the
+    /// parent connection retries it before the next SQL operation.
     pub fn deinit(self: *Transaction) void {
         if (!self.open) {
             return;
@@ -70,11 +80,26 @@ pub const Transaction = struct {
             return;
         }
 
-        _ = execOnHandle(handle, self.io_driver, "ROLLBACK") catch {
-            self.pending_action.* = .rollback;
-            return;
-        };
-        self.pending_action.* = .none;
+        switch (self.drop_behavior) {
+            .rollback => {
+                _ = execOnHandle(handle, self.io_driver, "ROLLBACK") catch {
+                    self.pending_action.* = .rollback;
+                    return;
+                };
+                self.pending_action.* = .none;
+            },
+            .commit => {
+                _ = execOnHandle(handle, self.io_driver, "COMMIT") catch {
+                    self.pending_action.* = .commit;
+                    return;
+                };
+                self.pending_action.* = .none;
+            },
+            .ignore => {
+                self.pending_action.* = .none;
+            },
+            .panic => @panic("transaction dropped without being finished"),
+        }
     }
 
     /// Executes a single SQL statement inside the transaction.
@@ -228,6 +253,16 @@ pub const Transaction = struct {
     /// Rolls the transaction back.
     pub fn rollback(self: *Transaction) (Allocator.Error || Error)!void {
         try self.finish("ROLLBACK");
+    }
+
+    /// Returns the cleanup behavior used when this transaction is dropped unfinished.
+    pub fn dropBehavior(self: Transaction) DropBehavior {
+        return self.drop_behavior;
+    }
+
+    /// Sets the cleanup behavior used when this transaction is dropped unfinished.
+    pub fn setDropBehavior(self: *Transaction, drop_behavior: DropBehavior) void {
+        self.drop_behavior = drop_behavior;
     }
 
     fn finish(self: *Transaction, sql: []const u8) (Allocator.Error || Error)!void {

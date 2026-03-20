@@ -23,6 +23,7 @@ test {
     _ = turso.Log;
     _ = turso.LogLevel;
     _ = turso.Logger;
+    _ = turso.TransactionDropBehavior;
     _ = turso.Row;
     _ = turso.Rows;
     _ = turso.RunResult;
