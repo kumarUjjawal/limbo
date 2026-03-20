@@ -1,3 +1,4 @@
+const std = @import("std");
 const turso = @import("turso");
 
 pub const OpenMemory = struct {
@@ -21,4 +22,15 @@ pub fn openMemory() !OpenMemory {
         .db = db,
         .conn = conn,
     };
+}
+
+pub fn tempPathAlloc(
+    allocator: std.mem.Allocator,
+    tmp_dir: *std.testing.TmpDir,
+    basename: []const u8,
+) ![]u8 {
+    const dir_path = try tmp_dir.parent_dir.realpathAlloc(allocator, &tmp_dir.sub_path);
+    defer allocator.free(dir_path);
+
+    return try std.fs.path.join(allocator, &.{ dir_path, basename });
 }

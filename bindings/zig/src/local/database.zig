@@ -6,8 +6,11 @@ const std = @import("std");
 const c = @import("../c.zig").bindings;
 const Connection = @import("connection.zig").Connection;
 const errors = @import("../common/error.zig");
+const options = @import("../common/options.zig");
 
 const Allocator = std.mem.Allocator;
+const DatabaseConfigStrings = options.DatabaseConfigStrings;
+const DatabaseOptions = options.DatabaseOptions;
 const Error = errors.Error;
 
 /// A local Turso database handle.
@@ -16,21 +19,30 @@ pub const Database = struct {
 
     /// Opens a local database at `path`.
     ///
-    /// Use `:memory:` to create an in-memory database.
+    /// Use `:memory:` to create an in-memory database. For experimental
+    /// features, VFS selection, or encryption, use `openWithOptions`.
     pub fn open(path: []const u8) (Allocator.Error || Error)!Database {
-        const path_z = try std.heap.c_allocator.dupeZ(u8, path);
-        defer std.heap.c_allocator.free(path_z);
+        return openWithOptions(path, .{});
+    }
+
+    /// Opens a local database at `path` with explicit configuration.
+    ///
+    /// This mirrors the local options shape used by the other bindings while
+    /// keeping the Zig API blocking and explicit.
+    pub fn openWithOptions(
+        path: []const u8,
+        db_options: DatabaseOptions,
+    ) (Allocator.Error || Error)!Database {
+        var config_strings = try DatabaseConfigStrings.fromOptions(
+            std.heap.c_allocator,
+            path,
+            db_options,
+        );
+        defer config_strings.deinit(std.heap.c_allocator);
 
         var handle: ?*const c.turso_database_t = null;
         var error_message: [*c]const u8 = null;
-        const config = c.turso_database_config_t{
-            .async_io = 0,
-            .path = path_z.ptr,
-            .experimental_features = null,
-            .vfs = null,
-            .encryption_cipher = null,
-            .encryption_hexkey = null,
-        };
+        const config = config_strings.toC(false);
         try errors.checkOk(c.turso_database_new(&config, &handle, &error_message), error_message);
         errdefer if (handle) |db| c.turso_database_deinit(db);
 

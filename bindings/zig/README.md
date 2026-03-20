@@ -16,13 +16,17 @@ The Zig binding currently focuses on the smallest runnable local database module
 - **Batch execution**: Run multi-statement setup or migration SQL through `Connection.execBatch`
 - **Transactions**: Use deferred, immediate, or exclusive transactions with explicit commit and rollback
 - **Single-row queries**: Fetch an owned `Row` with `queryRow` and access values by index or column name
+- **Configurable local open**: Enable experimental features, choose a VFS, or configure encryption with `Database.openWithOptions`
+- **Global setup**: Configure log filtering and callbacks with `turso.setup`
 - **Owned values**: Text and blob row values are copied into owned Zig values
 - **Small surface area**: Focused local API built around `Database`, `Connection`, `Transaction`, `Statement`, `Row`, and `Value`
 
 ## Supported Today
 
 - local database handles for `:memory:` and file-backed paths
+- global setup through `turso.setup`
 - blocking database API
+- configurable local open through `Database.openWithOptions`
 - direct SQL execution with `Connection.exec`
 - multi-statement execution with `Connection.execBatch`
 - transactions with `Connection.transaction`, `Connection.transactionWithBehavior`, and `Transaction.commit` / `Transaction.rollback`
@@ -252,7 +256,30 @@ pub fn main() !void {
 }
 ```
 
+### Global Setup and Local Options
+
+```zig
+const turso = @import("turso");
+
+pub fn main() !void {
+    try turso.setup(.{ .log_level = .debug });
+
+    var db = try turso.Database.openWithOptions("app.db", .{
+        .experimental = &.{ .attach },
+    });
+    defer db.deinit();
+}
+```
+
 ## API Reference
+
+### Setup
+
+Apply global Turso settings before opening a database:
+
+```zig
+try turso.setup(.{ .log_level = .info });
+```
 
 ### Database
 
@@ -261,6 +288,12 @@ Create or open a local database:
 ```zig
 var memory_db = try turso.Database.open(":memory:");
 var file_db = try turso.Database.open("data.db");
+var configured_db = try turso.Database.openWithOptions("secure.db", .{
+    .encryption = .{
+        .cipher = .aegis256,
+        .hexkey = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+    },
+});
 ```
 
 ### Connection

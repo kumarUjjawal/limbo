@@ -53,6 +53,29 @@
 //! Single-row query ergonomics are available through `Connection.queryRow`,
 //! `Transaction.queryRow`, and `Statement.queryRow`.
 //!
+//! Global logging can be configured before opening any database:
+//!
+//! ```zig
+//! const turso = @import("turso");
+//!
+//! pub fn main() !void {
+//!     try turso.setup(.{ .log_level = .info });
+//! }
+//! ```
+//!
+//! File-backed databases can be opened with explicit local options:
+//!
+//! ```zig
+//! const turso = @import("turso");
+//!
+//! pub fn main() !void {
+//!     var db = try turso.Database.openWithOptions("app.db", .{
+//!         .experimental = &.{.attach},
+//!     });
+//!     defer db.deinit();
+//! }
+//! ```
+//!
 //! ## Current Limitations
 //!
 //! The current Zig binding is local-only and blocking-only. Handles must be
@@ -60,17 +83,35 @@
 //! into owned Zig memory before being returned to user code.
 const std = @import("std");
 const c = @import("c.zig").bindings;
+const options = @import("common/options.zig");
+const setup_api = @import("common/setup.zig");
 
 /// A connection to a local Turso database.
 pub const Connection = @import("local/connection.zig").Connection;
 /// A local Turso database handle.
 pub const Database = @import("local/database.zig").Database;
+/// Database options accepted by `Database.openWithOptions`.
+pub const DatabaseOptions = options.DatabaseOptions;
 /// Error values returned by the Zig binding.
 pub const Error = @import("common/error.zig").Error;
+/// Supported encryption ciphers for local database encryption.
+pub const EncryptionCipher = options.EncryptionCipher;
+/// Encryption configuration for local database encryption.
+pub const EncryptionOpts = options.EncryptionOpts;
+/// Experimental features supported by `Database.openWithOptions`.
+pub const ExperimentalFeature = options.ExperimentalFeature;
+/// Log entry forwarded through `setup`.
+pub const Log = setup_api.Log;
+/// Log level filter accepted by `setup`.
+pub const LogLevel = setup_api.LogLevel;
+/// Logger callback type accepted by `setup`.
+pub const Logger = setup_api.Logger;
 /// Result of preparing the first statement from a SQL string.
 pub const PrepareFirstResult = @import("local/connection.zig").PrepareFirstResult;
 /// Borrowed value that can be bound to a prepared statement parameter.
 pub const BindValue = @import("local/statement.zig").BindValue;
+/// Global setup configuration for the Zig binding.
+pub const SetupOptions = setup_api.SetupOptions;
 /// A prepared SQL statement.
 pub const Statement = @import("local/statement.zig").Statement;
 /// Result of stepping a prepared statement once.
@@ -83,6 +124,11 @@ pub const TransactionBehavior = @import("local/transaction.zig").Behavior;
 pub const Row = @import("common/row.zig").Row;
 /// Owned SQLite-compatible value returned by the binding.
 pub const Value = @import("common/value.zig").Value;
+
+/// Applies global Turso settings such as log filtering and log callbacks.
+pub fn setup(config: SetupOptions) Error!void {
+    return setup_api.setup(config);
+}
 
 /// Returns the Turso version string reported by the shared SDK.
 pub fn version() []const u8 {

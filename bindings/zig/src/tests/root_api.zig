@@ -5,3 +5,7 @@ test "version returns non-empty string" {
     const version = turso.version();
     try std.testing.expect(version.len > 0);
 }
+
+test "setup accepts empty options" {
+    try turso.setup(.{});
+}
