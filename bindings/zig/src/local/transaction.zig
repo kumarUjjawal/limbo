@@ -7,6 +7,7 @@
 const std = @import("std");
 const c = @import("../c.zig").bindings;
 const errors = @import("../common/error.zig");
+const IoDriver = @import("../common/io_driver.zig").IoDriver;
 const Row = @import("../common/row.zig").Row;
 const Statement = @import("statement.zig").Statement;
 
@@ -43,6 +44,7 @@ pub const Behavior = enum {
 pub const Transaction = struct {
     connection_handle: *?*c.turso_connection_t,
     pending_action: *PendingAction,
+    io_driver: ?IoDriver = null,
     open: bool = true,
 
     /// Cleans up the transaction.
@@ -65,7 +67,7 @@ pub const Transaction = struct {
             return;
         }
 
-        _ = execOnHandle(handle, "ROLLBACK") catch {
+        _ = execOnHandle(handle, self.io_driver, "ROLLBACK") catch {
             self.pending_action.* = .rollback;
             return;
         };
@@ -75,14 +77,14 @@ pub const Transaction = struct {
     /// Executes a single SQL statement inside the transaction.
     pub fn exec(self: *Transaction, sql: []const u8) (Allocator.Error || Error)!u64 {
         const handle = try self.ensureOpenHandle();
-        return execOnHandle(handle, sql);
+        return execOnHandle(handle, self.io_driver, sql);
     }
 
     /// Executes every statement found in `sql` inside the transaction.
     pub fn execBatch(self: *Transaction, sql: []const u8) (Allocator.Error || Error)!void {
         const handle = try self.ensureOpenHandle();
         var remaining: []const u8 = sql;
-        while (try prepareFirstOnHandle(handle, remaining)) |result| {
+        while (try prepareFirstOnHandle(handle, self.io_driver, remaining)) |result| {
             var prepared = result;
             defer prepared.statement.deinit();
 
@@ -94,13 +96,13 @@ pub const Transaction = struct {
     /// Prepares a single SQL statement inside the transaction.
     pub fn prepare(self: *Transaction, sql: []const u8) (Allocator.Error || Error)!Statement {
         const handle = try self.ensureOpenHandle();
-        return prepareSingleOnHandle(handle, sql);
+        return prepareSingleOnHandle(handle, self.io_driver, sql);
     }
 
     /// Returns the first row from `sql` as an owned `Row`.
     pub fn queryRow(self: *Transaction, allocator: Allocator, sql: []const u8) (Allocator.Error || Error)!Row {
         const handle = try self.ensureOpenHandle();
-        var stmt = try prepareSingleOnHandle(handle, sql);
+        var stmt = try prepareSingleOnHandle(handle, self.io_driver, sql);
         defer stmt.deinit();
         return stmt.queryRow(allocator);
     }
@@ -117,7 +119,7 @@ pub const Transaction = struct {
 
     fn finish(self: *Transaction, sql: []const u8) (Allocator.Error || Error)!void {
         const handle = try self.ensureOpenHandle();
-        _ = try execOnHandle(handle, sql);
+        _ = try execOnHandle(handle, self.io_driver, sql);
         self.pending_action.* = .none;
         self.open = false;
     }
@@ -141,13 +143,17 @@ pub const Transaction = struct {
     }
 };
 
-fn execOnHandle(handle: *c.turso_connection_t, sql: []const u8) (Allocator.Error || Error)!u64 {
-    var stmt = try prepareSingleOnHandle(handle, sql);
+fn execOnHandle(handle: *c.turso_connection_t, io_driver: ?IoDriver, sql: []const u8) (Allocator.Error || Error)!u64 {
+    var stmt = try prepareSingleOnHandle(handle, io_driver, sql);
     defer stmt.deinit();
     return stmt.execute();
 }
 
-fn prepareSingleOnHandle(handle: *c.turso_connection_t, sql: []const u8) (Allocator.Error || Error)!Statement {
+fn prepareSingleOnHandle(
+    handle: *c.turso_connection_t,
+    io_driver: ?IoDriver,
+    sql: []const u8,
+) (Allocator.Error || Error)!Statement {
     const sql_z = try std.heap.c_allocator.dupeZ(u8, sql);
     defer std.heap.c_allocator.free(sql_z);
 
@@ -157,10 +163,17 @@ fn prepareSingleOnHandle(handle: *c.turso_connection_t, sql: []const u8) (Alloca
         c.turso_connection_prepare_single(handle, sql_z.ptr, &statement, &error_message),
         error_message,
     );
-    return .{ .handle = statement };
+    return .{
+        .handle = statement,
+        .io_driver = io_driver,
+    };
 }
 
-fn prepareFirstOnHandle(handle: *c.turso_connection_t, sql: []const u8) (Allocator.Error || Error)!?PreparedSlice {
+fn prepareFirstOnHandle(
+    handle: *c.turso_connection_t,
+    io_driver: ?IoDriver,
+    sql: []const u8,
+) (Allocator.Error || Error)!?PreparedSlice {
     const sql_z = try std.heap.c_allocator.dupeZ(u8, sql);
     defer std.heap.c_allocator.free(sql_z);
 
@@ -174,13 +187,19 @@ fn prepareFirstOnHandle(handle: *c.turso_connection_t, sql: []const u8) (Allocat
 
     const statement_handle = statement orelse return null;
     if (tail_index == 0) {
-        var prepared: Statement = .{ .handle = statement_handle };
+        var prepared: Statement = .{
+            .handle = statement_handle,
+            .io_driver = io_driver,
+        };
         prepared.deinit();
         return error.UnexpectedStatus;
     }
 
     return .{
-        .statement = .{ .handle = statement_handle },
+        .statement = .{
+            .handle = statement_handle,
+            .io_driver = io_driver,
+        },
         .tail_index = tail_index,
     };
 }

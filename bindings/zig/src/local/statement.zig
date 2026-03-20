@@ -5,6 +5,7 @@
 const std = @import("std");
 const c = @import("../c.zig").bindings;
 const errors = @import("../common/error.zig");
+const IoDriver = @import("../common/io_driver.zig").IoDriver;
 const Row = @import("../common/row.zig").Row;
 const Value = @import("../common/value.zig").Value;
 
@@ -31,6 +32,7 @@ pub const BindValue = union(enum) {
 /// A prepared SQL statement.
 pub const Statement = struct {
     handle: ?*c.turso_statement_t,
+    io_driver: ?IoDriver = null,
 
     /// Releases the statement handle.
     ///
@@ -38,9 +40,7 @@ pub const Statement = struct {
     /// deallocated.
     pub fn deinit(self: *Statement) void {
         if (self.handle) |handle| {
-            var error_message: [*c]const u8 = null;
-            _ = c.turso_statement_finalize(handle, &error_message);
-            errors.freeErrorMessage(error_message);
+            _ = self.finalizeWithIo() catch {};
             c.turso_statement_deinit(handle);
             self.handle = null;
         }
@@ -51,17 +51,7 @@ pub const Statement = struct {
     /// This is primarily useful for statements where rows do not need to be
     /// inspected.
     pub fn execute(self: *Statement) Error!u64 {
-        const handle = self.handle orelse return error.Misuse;
-        var rows_changed: u64 = 0;
-        var error_message: [*c]const u8 = null;
-        const status = c.turso_statement_execute(handle, &rows_changed, &error_message);
-        switch (status) {
-            c.TURSO_OK, c.TURSO_DONE => {
-                errors.freeErrorMessage(error_message);
-                return rows_changed;
-            },
-            else => return errors.statusToError(status, error_message),
-        }
+        return self.executeWithIo();
     }
 
     /// Resets the statement and clears existing bindings.
@@ -76,20 +66,7 @@ pub const Statement = struct {
     /// When this returns `.row`, the current row can be read with
     /// `readValueAlloc`.
     pub fn step(self: *Statement) Error!StepResult {
-        const handle = self.handle orelse return error.Misuse;
-        var error_message: [*c]const u8 = null;
-        const status = c.turso_statement_step(handle, &error_message);
-        return switch (status) {
-            c.TURSO_ROW => blk: {
-                errors.freeErrorMessage(error_message);
-                break :blk .row;
-            },
-            c.TURSO_DONE => blk: {
-                errors.freeErrorMessage(error_message);
-                break :blk .done;
-            },
-            else => errors.statusToError(status, error_message),
-        };
+        return self.stepWithIo();
     }
 
     /// Returns the number of columns in the current result set.
@@ -313,6 +290,75 @@ pub const Statement = struct {
                 return row;
             },
         }
+    }
+
+    fn executeWithIo(self: *Statement) Error!u64 {
+        const handle = self.handle orelse return error.Misuse;
+        while (true) {
+            var rows_changed: u64 = 0;
+            var error_message: [*c]const u8 = null;
+            const status = c.turso_statement_execute(handle, &rows_changed, &error_message);
+            switch (status) {
+                c.TURSO_OK, c.TURSO_DONE => {
+                    errors.freeErrorMessage(error_message);
+                    return rows_changed;
+                },
+                c.TURSO_IO => {
+                    errors.freeErrorMessage(error_message);
+                    try self.driveIo(handle);
+                },
+                else => return errors.statusToError(status, error_message),
+            }
+        }
+    }
+
+    fn stepWithIo(self: *Statement) Error!StepResult {
+        const handle = self.handle orelse return error.Misuse;
+        while (true) {
+            var error_message: [*c]const u8 = null;
+            const status = c.turso_statement_step(handle, &error_message);
+            switch (status) {
+                c.TURSO_ROW => {
+                    errors.freeErrorMessage(error_message);
+                    return .row;
+                },
+                c.TURSO_DONE => {
+                    errors.freeErrorMessage(error_message);
+                    return .done;
+                },
+                c.TURSO_IO => {
+                    errors.freeErrorMessage(error_message);
+                    try self.driveIo(handle);
+                },
+                else => return errors.statusToError(status, error_message),
+            }
+        }
+    }
+
+    fn finalizeWithIo(self: *Statement) Error!void {
+        const handle = self.handle orelse return error.Misuse;
+        while (true) {
+            var error_message: [*c]const u8 = null;
+            const status = c.turso_statement_finalize(handle, &error_message);
+            switch (status) {
+                c.TURSO_DONE => {
+                    errors.freeErrorMessage(error_message);
+                    return;
+                },
+                c.TURSO_IO => {
+                    errors.freeErrorMessage(error_message);
+                    try self.driveIo(handle);
+                },
+                else => return errors.statusToError(status, error_message),
+            }
+        }
+    }
+
+    fn driveIo(self: *Statement, handle: *c.turso_statement_t) Error!void {
+        var error_message: [*c]const u8 = null;
+        try errors.checkOk(c.turso_statement_run_io(handle, &error_message), error_message);
+        const io_driver = self.io_driver orelse return error.UnexpectedStatus;
+        try io_driver.run(handle);
     }
 };
 

@@ -5,6 +5,7 @@
 const std = @import("std");
 const c = @import("../c.zig").bindings;
 const errors = @import("../common/error.zig");
+const IoDriver = @import("../common/io_driver.zig").IoDriver;
 const Row = @import("../common/row.zig").Row;
 const Statement = @import("statement.zig").Statement;
 const transaction = @import("transaction.zig");
@@ -30,6 +31,7 @@ pub const PrepareFirstResult = struct {
 pub const Connection = struct {
     handle: ?*c.turso_connection_t,
     pending_tx_action: PendingAction = .none,
+    io_driver: ?IoDriver = null,
 
     /// Releases the connection handle.
     pub fn deinit(self: *Connection) void {
@@ -112,6 +114,7 @@ pub const Connection = struct {
         return .{
             .connection_handle = &self.handle,
             .pending_action = &self.pending_tx_action,
+            .io_driver = self.io_driver,
         };
     }
 
@@ -131,7 +134,10 @@ pub const Connection = struct {
             c.turso_connection_prepare_single(handle, sql_z.ptr, &statement, &error_message),
             error_message,
         );
-        return .{ .handle = statement };
+        return .{
+            .handle = statement,
+            .io_driver = self.io_driver,
+        };
     }
 
     /// Prepares the first SQL statement from `sql`.
@@ -154,13 +160,19 @@ pub const Connection = struct {
 
         const statement_handle = statement orelse return null;
         if (tail_index == 0) {
-            var prepared: Statement = .{ .handle = statement_handle };
+            var prepared: Statement = .{
+                .handle = statement_handle,
+                .io_driver = self.io_driver,
+            };
             prepared.deinit();
             return error.UnexpectedStatus;
         }
 
         return .{
-            .statement = .{ .handle = statement_handle },
+            .statement = .{
+                .handle = statement_handle,
+                .io_driver = self.io_driver,
+            },
             .tail_index = tail_index,
         };
     }
@@ -170,14 +182,14 @@ pub const Connection = struct {
             .none => {},
             .rollback => {
                 const handle = self.handle orelse return error.Misuse;
-                _ = try execRollback(handle);
+                _ = try execRollback(handle, self.io_driver);
                 self.pending_tx_action = .none;
             },
         }
     }
 };
 
-fn execRollback(handle: *c.turso_connection_t) (Allocator.Error || Error)!u64 {
+fn execRollback(handle: *c.turso_connection_t, io_driver: ?IoDriver) (Allocator.Error || Error)!u64 {
     const sql_z = try std.heap.c_allocator.dupeZ(u8, "ROLLBACK");
     defer std.heap.c_allocator.free(sql_z);
 
@@ -188,7 +200,10 @@ fn execRollback(handle: *c.turso_connection_t) (Allocator.Error || Error)!u64 {
         error_message,
     );
 
-    var stmt: Statement = .{ .handle = statement };
+    var stmt: Statement = .{
+        .handle = statement,
+        .io_driver = io_driver,
+    };
     defer stmt.deinit();
     return stmt.execute();
 }
