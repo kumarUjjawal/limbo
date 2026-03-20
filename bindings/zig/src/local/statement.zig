@@ -4,6 +4,7 @@
 //! the current row are copied before being exposed to user code.
 const std = @import("std");
 const c = @import("../c.zig").bindings;
+const bind_params = @import("../common/bind_params.zig");
 const errors = @import("../common/error.zig");
 const IoDriver = @import("../common/io_driver.zig").IoDriver;
 const Row = @import("../common/row.zig").Row;
@@ -23,13 +24,11 @@ pub const StepResult = enum {
 };
 
 /// Borrowed value that can be bound to a prepared statement parameter.
-pub const BindValue = union(enum) {
-    null,
-    integer: i64,
-    real: f64,
-    text: []const u8,
-    blob: []const u8,
-};
+pub const BindValue = bind_params.BindValue;
+/// Borrowed named parameter binding applied by convenience helpers.
+pub const NamedBindValue = bind_params.NamedBindValue;
+/// Positional and named parameters applied to a statement together.
+pub const BindParams = bind_params.BindParams;
 
 /// A prepared SQL statement.
 pub const Statement = struct {
@@ -67,6 +66,17 @@ pub const Statement = struct {
             .changes = changes,
             .last_insert_rowid = c.turso_connection_last_insert_rowid(connection_handle),
         };
+    }
+
+    /// Resets the statement, applies `params`, and returns result metadata.
+    ///
+    /// This clears existing bindings before execution and resets the statement
+    /// again before returning so the prepared statement can be reused safely.
+    pub fn runWith(self: *Statement, params: BindParams) (Allocator.Error || Error)!RunResult {
+        try self.reset();
+        defer self.reset() catch {};
+        try self.bindParams(params);
+        return self.run();
     }
 
     /// Resets the statement and clears existing bindings.
@@ -191,6 +201,11 @@ pub const Statement = struct {
     pub fn bindNamed(self: *Statement, name: []const u8, value: BindValue) (Allocator.Error || Error)!void {
         const position = try self.namedPosition(name) orelse return error.Misuse;
         try self.bindValue(position, value);
+    }
+
+    /// Applies positional and named parameters using the current statement bindings.
+    pub fn bindParams(self: *Statement, params: BindParams) (Allocator.Error || Error)!void {
+        return bind_params.apply(self, params);
     }
 
     /// Binds `NULL` at a 1-based positional parameter.
@@ -318,6 +333,17 @@ pub const Statement = struct {
         };
     }
 
+    /// Resets the statement, applies `params`, and returns the first row, if any.
+    ///
+    /// This clears existing bindings before execution and resets the statement
+    /// again before returning so the prepared statement can be reused safely.
+    pub fn getWith(self: *Statement, allocator: Allocator, params: BindParams) (Allocator.Error || Error)!?Row {
+        try self.reset();
+        defer self.reset() catch {};
+        try self.bindParams(params);
+        return self.get(allocator);
+    }
+
     /// Returns every row from the current statement as owned data.
     ///
     /// The statement uses its current bindings and is left stepped to
@@ -340,6 +366,17 @@ pub const Statement = struct {
         }
 
         return .{ .items = try rows.toOwnedSlice(allocator) };
+    }
+
+    /// Resets the statement, applies `params`, and returns every row as owned data.
+    ///
+    /// This clears existing bindings before execution and resets the statement
+    /// again before returning so the prepared statement can be reused safely.
+    pub fn allWith(self: *Statement, allocator: Allocator, params: BindParams) (Allocator.Error || Error)!Rows {
+        try self.reset();
+        defer self.reset() catch {};
+        try self.bindParams(params);
+        return self.all(allocator);
     }
 
     fn executeWithIo(self: *Statement) Error!u64 {

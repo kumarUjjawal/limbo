@@ -11,6 +11,7 @@ const IoDriver = @import("../common/io_driver.zig").IoDriver;
 const Row = @import("../common/row.zig").Row;
 const Rows = @import("../common/rows.zig").Rows;
 const RunResult = @import("../common/run_result.zig").RunResult;
+const BindParams = @import("statement.zig").BindParams;
 const Statement = @import("statement.zig").Statement;
 
 const Allocator = std.mem.Allocator;
@@ -90,6 +91,18 @@ pub const Transaction = struct {
         return stmt.run();
     }
 
+    /// Executes a single SQL statement inside the transaction with `params` and returns result metadata.
+    pub fn runWith(
+        self: *Transaction,
+        sql: []const u8,
+        params: BindParams,
+    ) (Allocator.Error || Error)!RunResult {
+        const handle = try self.ensureOpenHandle();
+        var stmt = try prepareSingleOnHandle(handle, self.io_driver, sql);
+        defer stmt.deinit();
+        return stmt.runWith(params);
+    }
+
     /// Executes every statement found in `sql` inside the transaction.
     pub fn execBatch(self: *Transaction, sql: []const u8) (Allocator.Error || Error)!void {
         const handle = try self.ensureOpenHandle();
@@ -125,12 +138,38 @@ pub const Transaction = struct {
         return stmt.get(allocator);
     }
 
+    /// Returns the first row from `sql` inside the transaction after applying `params`, if any.
+    pub fn getWith(
+        self: *Transaction,
+        allocator: Allocator,
+        sql: []const u8,
+        params: BindParams,
+    ) (Allocator.Error || Error)!?Row {
+        const handle = try self.ensureOpenHandle();
+        var stmt = try prepareSingleOnHandle(handle, self.io_driver, sql);
+        defer stmt.deinit();
+        return stmt.getWith(allocator, params);
+    }
+
     /// Returns every row from `sql` inside the transaction as owned data.
     pub fn all(self: *Transaction, allocator: Allocator, sql: []const u8) (Allocator.Error || Error)!Rows {
         const handle = try self.ensureOpenHandle();
         var stmt = try prepareSingleOnHandle(handle, self.io_driver, sql);
         defer stmt.deinit();
         return stmt.all(allocator);
+    }
+
+    /// Returns every row from `sql` inside the transaction after applying `params` as owned data.
+    pub fn allWith(
+        self: *Transaction,
+        allocator: Allocator,
+        sql: []const u8,
+        params: BindParams,
+    ) (Allocator.Error || Error)!Rows {
+        const handle = try self.ensureOpenHandle();
+        var stmt = try prepareSingleOnHandle(handle, self.io_driver, sql);
+        defer stmt.deinit();
+        return stmt.allWith(allocator, params);
     }
 
     /// Executes `PRAGMA {source}` inside the transaction and returns all resulting rows.

@@ -329,3 +329,56 @@ test "statement run get and all provide convenience helpers" {
         else => false,
     });
 }
+
+test "statement bindParams runWith getWith and allWith support reusable parameterized calls" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+
+    var insert = try fixture.conn.prepare("INSERT INTO users (name, age) VALUES (?1, :age)");
+    defer insert.deinit();
+
+    try insert.bindParams(.{
+        .positional = &.{.{ .text = "alice" }},
+        .named = &.{.{ .name = ":age", .value = .{ .integer = 30 } }},
+    });
+    const first_insert = try insert.run();
+    try std.testing.expectEqual(@as(u64, 1), first_insert.changes);
+
+    const second_insert = try insert.runWith(.{
+        .positional = &.{.{ .text = "bob" }},
+        .named = &.{.{ .name = ":age", .value = .{ .integer = 31 } }},
+    });
+    try std.testing.expectEqual(@as(u64, 1), second_insert.changes);
+    try std.testing.expectEqual(@as(i64, 2), second_insert.last_insert_rowid);
+
+    var get_stmt = try fixture.conn.prepare("SELECT id, name, age FROM users WHERE name = :name");
+    defer get_stmt.deinit();
+
+    var alice = (try get_stmt.getWith(std.testing.allocator, .{
+        .named = &.{.{ .name = ":name", .value = .{ .text = "alice" } }},
+    })).?;
+    defer alice.deinit(std.testing.allocator);
+    try std.testing.expect(switch ((try alice.valueByName("age")).*) {
+        .integer => |value| value == 30,
+        else => false,
+    });
+
+    try std.testing.expect((try get_stmt.getWith(std.testing.allocator, .{
+        .named = &.{.{ .name = ":name", .value = .{ .text = "missing" } }},
+    })) == null);
+
+    var all_stmt = try fixture.conn.prepare("SELECT id, name FROM users WHERE age >= ?1 ORDER BY id");
+    defer all_stmt.deinit();
+
+    var rows = try all_stmt.allWith(std.testing.allocator, .{
+        .positional = &.{.{ .integer = 31 }},
+    });
+    defer rows.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), rows.len());
+    try std.testing.expect(switch ((try (try rows.row(0)).valueByName("name")).*) {
+        .text => |value| std.mem.eql(u8, value, "bob"),
+        else => false,
+    });
+}

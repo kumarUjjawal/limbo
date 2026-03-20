@@ -12,8 +12,10 @@ test {
     _ = turso.Database;
     _ = turso.DatabaseOptions;
     _ = turso.Connection;
+    _ = turso.BindParams;
     _ = turso.EncryptionCipher;
     _ = turso.EncryptionOpts;
+    _ = turso.NamedBindValue;
     _ = turso.Statement;
     _ = turso.Transaction;
     _ = turso.ExperimentalFeature;

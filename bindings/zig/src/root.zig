@@ -52,7 +52,9 @@
 //!
 //! Convenience helpers are available through `Connection.run`, `Connection.get`,
 //! `Connection.all`, `Connection.pragma`, and the matching `Transaction` and
-//! `Statement` methods.
+//! `Statement` methods. Parameterized variants are available through
+//! `BindParams`, `Statement.bindParams`, and the `runWith` / `getWith` /
+//! `allWith` helper family.
 //!
 //! Global logging can be configured before opening any database:
 //!
@@ -114,8 +116,12 @@ pub const Logger = setup_api.Logger;
 pub const PrepareFirstResult = @import("local/connection.zig").PrepareFirstResult;
 /// Borrowed value that can be bound to a prepared statement parameter.
 pub const BindValue = @import("local/statement.zig").BindValue;
+/// Positional and named parameters applied by convenience helpers.
+pub const BindParams = @import("local/statement.zig").BindParams;
 /// Global setup configuration for the Zig binding.
 pub const SetupOptions = setup_api.SetupOptions;
+/// Borrowed named parameter binding applied by convenience helpers.
+pub const NamedBindValue = @import("local/statement.zig").NamedBindValue;
 /// A prepared SQL statement.
 pub const Statement = @import("local/statement.zig").Statement;
 /// Result of stepping a prepared statement once.

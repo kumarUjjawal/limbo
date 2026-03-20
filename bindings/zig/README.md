@@ -15,6 +15,7 @@ The Zig binding exposes blocking local and embedded-replica sync APIs. It is bui
 - **Prepared statements**: Reuse statements with positional and named parameter binding
 - **Batch execution**: Run multi-statement setup or migration SQL through `Connection.execBatch`
 - **Convenience queries**: Use `run`, `get`, `all`, and `pragma` on `Connection` and `Transaction`, plus `run`, `get`, and `all` on `Statement`
+- **Parameterized helpers**: Pass `BindParams` into `runWith`, `getWith`, and `allWith` without dropping to manual bind calls
 - **Transactions**: Use deferred, immediate, or exclusive transactions with explicit commit and rollback
 - **Single-row queries**: Fetch an owned `Row` with `queryRow` and access values by index or column name
 - **Configurable local open**: Enable experimental features, choose a VFS, or configure encryption with `Database.openWithOptions`
@@ -35,6 +36,7 @@ The Zig binding exposes blocking local and embedded-replica sync APIs. It is bui
 - direct SQL execution with `Connection.exec`
 - multi-statement execution with `Connection.execBatch`
 - convenience helpers through `Connection.run`, `Connection.get`, `Connection.all`, `Connection.pragma`, `Transaction.run`, `Transaction.get`, `Transaction.all`, `Transaction.pragma`, `Statement.run`, `Statement.get`, and `Statement.all`
+- parameterized convenience helpers through `BindParams`, `Statement.bindParams`, `Connection.runWith`, `Connection.getWith`, `Connection.allWith`, `Transaction.runWith`, `Transaction.getWith`, `Transaction.allWith`, `Statement.runWith`, `Statement.getWith`, and `Statement.allWith`
 - transactions with `Connection.transaction`, `Connection.transactionWithBehavior`, and `Transaction.commit` / `Transaction.rollback`
 - prepared statements with positional and named parameters, including numbered placeholders such as `?1` and `?3`
 - single-row queries through `Connection.queryRow`, `Transaction.queryRow`, and `Statement.queryRow`
@@ -341,6 +343,28 @@ var pragma_rows = try conn.pragma(allocator, "user_version");
 defer pragma_rows.deinit(allocator);
 ```
 
+Use `BindParams` when the one-shot helper needs parameters:
+
+```zig
+const params: turso.BindParams = .{
+    .positional = &.{
+        .{ .text = "alice" },
+        .{ .integer = 30 },
+    },
+};
+
+const insert_result = try conn.runWith(
+    "INSERT INTO users (name, age) VALUES (?1, ?2)",
+    params,
+);
+_ = insert_result;
+
+var rows = try conn.allWith(allocator, "SELECT id, name FROM users WHERE age >= :min_age", .{
+    .named = &.{.{ .name = ":min_age", .value = .{ .integer = 30 } }},
+});
+defer rows.deinit(allocator);
+```
+
 ### Statement
 
 Bind values, step through rows, and read owned results:
@@ -374,6 +398,18 @@ defer query_stmt.deinit();
 
 var rows = try query_stmt.all(allocator);
 defer rows.deinit(allocator);
+```
+
+Prepared statements also accept shared parameter sets:
+
+```zig
+var query_stmt = try conn.prepare("SELECT id, name FROM users WHERE name = :name");
+defer query_stmt.deinit();
+
+var row = (try query_stmt.getWith(allocator, .{
+    .named = &.{.{ .name = ":name", .value = .{ .text = "alice" } }},
+})).?;
+defer row.deinit(allocator);
 ```
 
 ### Transaction
@@ -427,6 +463,7 @@ switch (value) {
 - `Database`, `Connection`, `Statement`, and owned `Value` buffers must be cleaned up explicitly with `deinit`.
 - `Transaction.deinit` rolls back unfinished work. Call `commit` or `rollback` explicitly when the outcome matters.
 - Parameter binding supports positional and named placeholders. Named lookups must include the SQLite prefix such as `:name`, `@name`, `$name`, or `?3`.
+- `BindParams.named` entries follow the same rule as `bindNamed`: parameter names must include the SQLite prefix such as `:name`, `@name`, `$name`, or `?3`.
 - Column-name lookups on `Statement` and `Row` are ASCII case-insensitive to match the Rust binding.
 - `Connection.execBatch` executes each statement to completion and discards any produced rows.
 - `Connection.get`, `Connection.all`, `Connection.pragma`, `Transaction.get`, `Transaction.all`, and the matching statement helpers return owned rows that must be cleaned up with `deinit`.

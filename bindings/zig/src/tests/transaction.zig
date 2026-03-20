@@ -141,6 +141,48 @@ test "transaction run get all and pragma mirror connection helpers" {
     try tx.rollback();
 }
 
+test "transaction runWith getWith and allWith bind parameters" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+
+    var tx = try fixture.conn.transaction();
+    defer tx.deinit();
+
+    const insert_result = try tx.runWith("INSERT INTO users (name, age) VALUES (?1, ?2)", .{
+        .positional = &.{
+            .{ .text = "alice" },
+            .{ .integer = 30 },
+        },
+    });
+    try std.testing.expectEqual(@as(u64, 1), insert_result.changes);
+
+    _ = try tx.runWith("INSERT INTO users (name, age) VALUES (:name, :age)", .{
+        .named = &.{
+            .{ .name = ":name", .value = .{ .text = "bob" } },
+            .{ .name = ":age", .value = .{ .integer = 31 } },
+        },
+    });
+
+    var row = (try tx.getWith(std.testing.allocator, "SELECT id, name FROM users WHERE age = :age", .{
+        .named = &.{.{ .name = ":age", .value = .{ .integer = 30 } }},
+    })).?;
+    defer row.deinit(std.testing.allocator);
+    try std.testing.expect(switch ((try row.valueByName("name")).*) {
+        .text => |value| std.mem.eql(u8, value, "alice"),
+        else => false,
+    });
+
+    var rows = try tx.allWith(std.testing.allocator, "SELECT id, name FROM users WHERE age >= ?1 ORDER BY id", .{
+        .positional = &.{.{ .integer = 30 }},
+    });
+    defer rows.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 2), rows.len());
+
+    try tx.rollback();
+}
+
 fn expectCount(conn: *turso.Connection, expected: i64) !void {
     var stmt = try conn.prepare("SELECT COUNT(*) FROM t");
     defer stmt.deinit();

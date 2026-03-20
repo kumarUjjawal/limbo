@@ -9,6 +9,7 @@ const IoDriver = @import("../common/io_driver.zig").IoDriver;
 const Row = @import("../common/row.zig").Row;
 const Rows = @import("../common/rows.zig").Rows;
 const RunResult = @import("../common/run_result.zig").RunResult;
+const BindParams = @import("statement.zig").BindParams;
 const Statement = @import("statement.zig").Statement;
 const transaction = @import("transaction.zig");
 
@@ -63,6 +64,14 @@ pub const Connection = struct {
         return stmt.run();
     }
 
+    /// Executes a single SQL statement with `params` and returns result metadata.
+    pub fn runWith(self: *Connection, sql: []const u8, params: BindParams) (Allocator.Error || Error)!RunResult {
+        try self.resolvePendingTransaction();
+        var stmt = try self.prepare(sql);
+        defer stmt.deinit();
+        return stmt.runWith(params);
+    }
+
     /// Executes every statement found in `sql`.
     ///
     /// This is intended for DDL or script-style setup. Statements that produce
@@ -114,11 +123,35 @@ pub const Connection = struct {
         return stmt.get(allocator);
     }
 
+    /// Returns the first row from `sql` after applying `params`, if any.
+    pub fn getWith(
+        self: *Connection,
+        allocator: Allocator,
+        sql: []const u8,
+        params: BindParams,
+    ) (Allocator.Error || Error)!?Row {
+        var stmt = try self.prepare(sql);
+        defer stmt.deinit();
+        return stmt.getWith(allocator, params);
+    }
+
     /// Returns every row from `sql` as owned data.
     pub fn all(self: *Connection, allocator: Allocator, sql: []const u8) (Allocator.Error || Error)!Rows {
         var stmt = try self.prepare(sql);
         defer stmt.deinit();
         return stmt.all(allocator);
+    }
+
+    /// Returns every row from `sql` after applying `params` as owned data.
+    pub fn allWith(
+        self: *Connection,
+        allocator: Allocator,
+        sql: []const u8,
+        params: BindParams,
+    ) (Allocator.Error || Error)!Rows {
+        var stmt = try self.prepare(sql);
+        defer stmt.deinit();
+        return stmt.allWith(allocator, params);
     }
 
     /// Executes `PRAGMA {source}` and returns all resulting rows.

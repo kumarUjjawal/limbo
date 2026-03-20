@@ -105,7 +105,13 @@ test "sync database open and connect reuse local SQL surface" {
 
     _ = try conn.exec("CREATE TABLE t(id INTEGER PRIMARY KEY, x INTEGER)");
 
-    _ = try conn.run("INSERT INTO t (x) VALUES (1), (2), (3)");
+    _ = try conn.runWith("INSERT INTO t (x) VALUES (?1), (?2), (?3)", .{
+        .positional = &.{
+            .{ .integer = 1 },
+            .{ .integer = 2 },
+            .{ .integer = 3 },
+        },
+    });
 
     var stats = try db.stats(std.testing.allocator);
     defer stats.deinit(std.testing.allocator);
@@ -113,14 +119,18 @@ test "sync database open and connect reuse local SQL surface" {
 
     try db.checkpoint();
 
-    var row = (try conn.get(std.testing.allocator, "SELECT x FROM t ORDER BY id LIMIT 1")).?;
+    var row = (try conn.getWith(std.testing.allocator, "SELECT x FROM t WHERE id = ?1", .{
+        .positional = &.{.{ .integer = 1 }},
+    })).?;
     defer row.deinit(std.testing.allocator);
     try std.testing.expect(switch ((try row.valueByName("x")).*) {
         .integer => |count| count == 1,
         else => false,
     });
 
-    var rows = try conn.all(std.testing.allocator, "SELECT x FROM t ORDER BY id");
+    var rows = try conn.allWith(std.testing.allocator, "SELECT x FROM t WHERE x >= :min_value ORDER BY id", .{
+        .named = &.{.{ .name = ":min_value", .value = .{ .integer = 1 } }},
+    });
     defer rows.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 3), rows.len());
     try std.testing.expect(switch ((try (try rows.row(2)).valueByName("x")).*) {

@@ -195,3 +195,41 @@ test "connection run get all and pragma provide convenience helpers" {
         else => false,
     });
 }
+
+test "connection runWith getWith and allWith bind parameters" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+
+    const first_insert = try fixture.conn.runWith("INSERT INTO users (name, age) VALUES (?1, ?2)", .{
+        .positional = &.{
+            .{ .text = "alice" },
+            .{ .integer = 30 },
+        },
+    });
+    try std.testing.expectEqual(@as(u64, 1), first_insert.changes);
+
+    const second_insert = try fixture.conn.runWith("INSERT INTO users (name, age) VALUES (:name, :age)", .{
+        .named = &.{
+            .{ .name = ":name", .value = .{ .text = "bob" } },
+            .{ .name = ":age", .value = .{ .integer = 31 } },
+        },
+    });
+    try std.testing.expectEqual(@as(u64, 1), second_insert.changes);
+
+    var row = (try fixture.conn.getWith(std.testing.allocator, "SELECT id, name, age FROM users WHERE age = ?1", .{
+        .positional = &.{.{ .integer = 31 }},
+    })).?;
+    defer row.deinit(std.testing.allocator);
+    try std.testing.expect(switch ((try row.valueByName("name")).*) {
+        .text => |value| std.mem.eql(u8, value, "bob"),
+        else => false,
+    });
+
+    var rows = try fixture.conn.allWith(std.testing.allocator, "SELECT id, name FROM users WHERE age >= :min_age ORDER BY id", .{
+        .named = &.{.{ .name = ":min_age", .value = .{ .integer = 30 } }},
+    });
+    defer rows.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 2), rows.len());
+}
