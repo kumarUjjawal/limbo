@@ -48,8 +48,12 @@ pub const RemoteEncryptionCipher = enum {
 pub const RemoteEncryptionOptions = struct {
     /// Base64-encoded remote encryption key.
     key: []const u8,
-    /// Remote encryption cipher.
-    cipher: RemoteEncryptionCipher,
+    /// Optional remote encryption cipher.
+    ///
+    /// Provide this when the sync engine needs to know reserved bytes during
+    /// initial bootstrap. A key on its own is still valid for deferred sync
+    /// setups where that metadata is already known.
+    cipher: ?RemoteEncryptionCipher = null,
 };
 
 /// Partial bootstrap strategy for partial sync.
@@ -122,7 +126,10 @@ pub const DatabaseConfigStrings = struct {
             else
                 null,
             .remote_encryption_cipher = if (options.remote_encryption) |remote_encryption|
-                try allocator.dupeZ(u8, remote_encryption.cipher.name())
+                if (remote_encryption.cipher) |cipher|
+                    try allocator.dupeZ(u8, cipher.name())
+                else
+                    null
             else
                 null,
         };
@@ -157,7 +164,7 @@ pub const DatabaseConfigStrings = struct {
             .long_poll_timeout_ms = options.long_poll_timeout_ms orelse 0,
             .bootstrap_if_empty = options.bootstrap_if_empty,
             .reserved_bytes = if (options.remote_encryption) |remote_encryption|
-                remote_encryption.cipher.reservedBytes()
+                if (remote_encryption.cipher) |cipher| cipher.reservedBytes() else 0
             else
                 0,
             .partial_bootstrap_strategy_prefix = if (options.partial_sync) |partial_sync|
@@ -208,6 +215,24 @@ test "remote encryption derives reserved bytes" {
     });
     try std.testing.expectEqual(@as(i32, 28), config.reserved_bytes);
     try std.testing.expectEqualStrings("aes256gcm", std.mem.span(config.remote_encryption_cipher));
+}
+
+test "remote encryption accepts key without cipher" {
+    var strings = try DatabaseConfigStrings.fromOptions(std.testing.allocator, "local.db", .{
+        .remote_encryption = .{
+            .key = "base64-key",
+        },
+    });
+    defer strings.deinit(std.testing.allocator);
+
+    const config = strings.toC(.{
+        .remote_encryption = .{
+            .key = "base64-key",
+        },
+    });
+    try std.testing.expectEqual(@as(i32, 0), config.reserved_bytes);
+    try std.testing.expectEqualStrings("base64-key", std.mem.span(config.remote_encryption_key));
+    try std.testing.expect(config.remote_encryption_cipher == null);
 }
 
 test "partial sync query strategy keeps query string" {

@@ -148,6 +148,36 @@ test "sync database open and connect reuse local SQL surface" {
     });
 }
 
+test "sync database accepts remote encryption key without cipher" {
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const db_path = try support.tempPathAlloc(std.testing.allocator, &tmp_dir, "key-only-replica.db");
+    defer std.testing.allocator.free(db_path);
+
+    var db = try turso.sync.Database.openWithOptions(db_path, .{
+        .bootstrap_if_empty = false,
+        .remote_encryption = .{
+            .key = "base64-key",
+        },
+    });
+    defer db.deinit();
+
+    var conn = try db.connect();
+    defer conn.deinit();
+
+    _ = try conn.execute("CREATE TABLE t(x INTEGER)");
+    _ = try conn.execute("INSERT INTO t VALUES (1)");
+
+    var row = try conn.queryRow(std.testing.allocator, "SELECT x FROM t");
+    defer row.deinit(std.testing.allocator);
+
+    try std.testing.expect(switch ((try row.value(0)).*) {
+        .integer => |value| value == 1,
+        else => false,
+    });
+}
+
 fn processFullRead(item: *turso.sync.IoItem) !void {
     const request = try item.fullReadRequest();
     var file = openFileForRead(request.path) catch |err| switch (err) {
