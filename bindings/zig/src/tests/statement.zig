@@ -246,6 +246,54 @@ test "statement readValueByNameAlloc and readRowAlloc use column names" {
     try std.testing.expectEqualStrings("name", try row.columnName(1));
 }
 
+test "statement typed read helpers decode current row values" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.execute("CREATE TABLE t (i INTEGER, r REAL, txt TEXT, b BLOB, n TEXT)");
+    _ = try fixture.conn.execute("INSERT INTO t VALUES (42, 3.25, 'hello', x'0102ff', NULL)");
+
+    var stmt = try fixture.conn.prepare("SELECT i, r, txt, b, n FROM t");
+    defer stmt.deinit();
+
+    try std.testing.expectEqual(turso.StepResult.row, try stmt.step());
+
+    try std.testing.expectEqual(@as(i64, 42), try stmt.readInt(0));
+    try std.testing.expectEqual(@as(f64, 3.25), try stmt.readFloat(1));
+
+    const text_value = try stmt.readTextAlloc(std.testing.allocator, 2);
+    defer std.testing.allocator.free(text_value);
+    try std.testing.expectEqualStrings("hello", text_value);
+
+    const blob_value = try stmt.readBlobAlloc(std.testing.allocator, 3);
+    defer std.testing.allocator.free(blob_value);
+    try std.testing.expectEqualSlices(u8, &.{ 0x01, 0x02, 0xff }, blob_value);
+
+    try std.testing.expect(try stmt.readIsNull(4));
+    try std.testing.expectEqual(@as(i64, 42), try stmt.readIntByName("i"));
+    try std.testing.expectEqual(@as(f64, 3.25), try stmt.readFloatByName("R"));
+    const text_by_name = try stmt.readTextByNameAlloc(std.testing.allocator, "txt");
+    defer std.testing.allocator.free(text_by_name);
+    try std.testing.expectEqualStrings("hello", text_by_name);
+}
+
+test "statement typed read helpers reject mismatched types" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.execute("CREATE TABLE t (i INTEGER, txt TEXT)");
+    _ = try fixture.conn.execute("INSERT INTO t VALUES (42, 'hello')");
+
+    var stmt = try fixture.conn.prepare("SELECT i, txt FROM t");
+    defer stmt.deinit();
+
+    try std.testing.expectEqual(turso.StepResult.row, try stmt.step());
+
+    try std.testing.expectError(error.Misuse, stmt.readFloat(0));
+    try std.testing.expectError(error.Misuse, stmt.readBlobAlloc(std.testing.allocator, 1));
+    try std.testing.expectError(error.Misuse, stmt.readIntByName("txt"));
+}
+
 test "statement queryRow returns first row and drains remaining rows" {
     var fixture = try support.openMemory();
     defer fixture.deinit();

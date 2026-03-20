@@ -260,6 +260,89 @@ pub const Statement = struct {
         return self.readValueAlloc(allocator, try self.columnIndex(name));
     }
 
+    /// Returns `true` when the current row value at `index` is `NULL`.
+    pub fn readIsNull(self: *Statement, index: usize) Error!bool {
+        const handle = self.handle orelse return errors.fail(error.Misuse);
+        return switch (c.turso_statement_row_value_kind(handle, index)) {
+            c.TURSO_TYPE_NULL => true,
+            c.TURSO_TYPE_INTEGER,
+            c.TURSO_TYPE_REAL,
+            c.TURSO_TYPE_TEXT,
+            c.TURSO_TYPE_BLOB,
+            => false,
+            else => errors.fail(error.Misuse),
+        };
+    }
+
+    /// Returns the integer value at `index` from the current row.
+    pub fn readInt(self: *Statement, index: usize) Error!i64 {
+        const handle = self.handle orelse return errors.fail(error.Misuse);
+        return switch (c.turso_statement_row_value_kind(handle, index)) {
+            c.TURSO_TYPE_INTEGER => c.turso_statement_row_value_int(handle, index),
+            else => errors.fail(error.Misuse),
+        };
+    }
+
+    /// Returns the floating-point value at `index` from the current row.
+    pub fn readFloat(self: *Statement, index: usize) Error!f64 {
+        const handle = self.handle orelse return errors.fail(error.Misuse);
+        return switch (c.turso_statement_row_value_kind(handle, index)) {
+            c.TURSO_TYPE_REAL => c.turso_statement_row_value_double(handle, index),
+            else => errors.fail(error.Misuse),
+        };
+    }
+
+    /// Returns an owned copy of the text value at `index` from the current row.
+    pub fn readTextAlloc(self: *Statement, allocator: Allocator, index: usize) (Allocator.Error || Error)![]u8 {
+        const handle = self.handle orelse return errors.fail(error.Misuse);
+        return switch (c.turso_statement_row_value_kind(handle, index)) {
+            c.TURSO_TYPE_TEXT => copyRowBytes(allocator, handle, index),
+            else => errors.fail(error.Misuse),
+        };
+    }
+
+    /// Returns an owned copy of the blob value at `index` from the current row.
+    pub fn readBlobAlloc(self: *Statement, allocator: Allocator, index: usize) (Allocator.Error || Error)![]u8 {
+        const handle = self.handle orelse return errors.fail(error.Misuse);
+        return switch (c.turso_statement_row_value_kind(handle, index)) {
+            c.TURSO_TYPE_BLOB => copyRowBytes(allocator, handle, index),
+            else => errors.fail(error.Misuse),
+        };
+    }
+
+    /// Returns `true` when the current row value for column `name` is `NULL`.
+    pub fn readIsNullByName(self: *Statement, name: []const u8) Error!bool {
+        return self.readIsNull(try self.columnIndex(name));
+    }
+
+    /// Returns the integer value for column `name` from the current row.
+    pub fn readIntByName(self: *Statement, name: []const u8) Error!i64 {
+        return self.readInt(try self.columnIndex(name));
+    }
+
+    /// Returns the floating-point value for column `name` from the current row.
+    pub fn readFloatByName(self: *Statement, name: []const u8) Error!f64 {
+        return self.readFloat(try self.columnIndex(name));
+    }
+
+    /// Returns an owned copy of the text value for column `name` from the current row.
+    pub fn readTextByNameAlloc(
+        self: *Statement,
+        allocator: Allocator,
+        name: []const u8,
+    ) (Allocator.Error || Error)![]u8 {
+        return self.readTextAlloc(allocator, try self.columnIndex(name));
+    }
+
+    /// Returns an owned copy of the blob value for column `name` from the current row.
+    pub fn readBlobByNameAlloc(
+        self: *Statement,
+        allocator: Allocator,
+        name: []const u8,
+    ) (Allocator.Error || Error)![]u8 {
+        return self.readBlobAlloc(allocator, try self.columnIndex(name));
+    }
+
     /// Reads a value from the current row and returns an owned copy when needed.
     ///
     /// Text and blob values are copied before being returned because row

@@ -59,11 +59,61 @@ pub const Row = struct {
         return &self.values[try indexOrError(self.values.len, index)];
     }
 
+    /// Returns `true` when the value at `index` is `NULL`.
+    pub fn isNull(self: *const Row, index: usize) error{Misuse}!bool {
+        return (try self.value(index)).isNull();
+    }
+
+    /// Returns the integer value at `index`.
+    pub fn int(self: *const Row, index: usize) error{Misuse}!i64 {
+        return (try self.value(index)).int();
+    }
+
+    /// Returns the floating-point value at `index`.
+    pub fn float(self: *const Row, index: usize) error{Misuse}!f64 {
+        return (try self.value(index)).float();
+    }
+
+    /// Returns the text value at `index`.
+    pub fn text(self: *const Row, index: usize) error{Misuse}![]const u8 {
+        return (try self.value(index)).textBytes();
+    }
+
+    /// Returns the blob value at `index`.
+    pub fn blob(self: *const Row, index: usize) error{Misuse}![]const u8 {
+        return (try self.value(index)).blobBytes();
+    }
+
     /// Returns the value for column `name`.
     ///
     /// Lookups are ASCII case-insensitive.
     pub fn valueByName(self: *const Row, name: []const u8) error{Misuse}!*const Value {
         return self.value(try self.columnIndex(name));
+    }
+
+    /// Returns `true` when the value for column `name` is `NULL`.
+    pub fn isNullByName(self: *const Row, name: []const u8) error{Misuse}!bool {
+        return (try self.valueByName(name)).isNull();
+    }
+
+    /// Returns the integer value for column `name`.
+    pub fn intByName(self: *const Row, name: []const u8) error{Misuse}!i64 {
+        return (try self.valueByName(name)).int();
+    }
+
+    /// Returns the floating-point value for column `name`.
+    pub fn floatByName(self: *const Row, name: []const u8) error{Misuse}!f64 {
+        return (try self.valueByName(name)).float();
+    }
+
+    /// Returns the text value for column `name`.
+    pub fn textByName(self: *const Row, name: []const u8) error{Misuse}![]const u8 {
+        return (try self.valueByName(name)).textBytes();
+    }
+
+    /// Returns the blob value for column `name`.
+    pub fn blobByName(self: *const Row, name: []const u8) error{Misuse}![]const u8 {
+        return (try self.valueByName(name)).blobBytes();
     }
 };
 
