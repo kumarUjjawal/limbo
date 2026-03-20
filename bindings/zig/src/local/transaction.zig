@@ -274,12 +274,12 @@ pub const Transaction = struct {
 
     /// Commits the transaction.
     pub fn commit(self: *Transaction) (Allocator.Error || Error)!void {
-        try self.finish("COMMIT");
+        try self.finishWithSql("COMMIT");
     }
 
     /// Rolls the transaction back.
     pub fn rollback(self: *Transaction) (Allocator.Error || Error)!void {
-        try self.finish("ROLLBACK");
+        try self.finishWithSql("ROLLBACK");
     }
 
     /// Returns the cleanup behavior used when this transaction is dropped unfinished.
@@ -292,7 +292,37 @@ pub const Transaction = struct {
         self.drop_behavior = drop_behavior;
     }
 
-    fn finish(self: *Transaction, sql: []const u8) (Allocator.Error || Error)!void {
+    /// Applies the current drop behavior immediately.
+    pub fn finish(self: *Transaction) (Allocator.Error || Error)!void {
+        if (!self.open) {
+            return;
+        }
+
+        const handle = self.connection_handle.* orelse {
+            self.pending_action.* = .none;
+            self.open = false;
+            return;
+        };
+        if (c.turso_connection_get_autocommit(handle)) {
+            self.pending_action.* = .none;
+            self.open = false;
+            return;
+        }
+
+        switch (self.drop_behavior) {
+            .commit => self.finishWithSql("COMMIT") catch {
+                return self.finishWithSql("ROLLBACK");
+            },
+            .rollback => try self.finishWithSql("ROLLBACK"),
+            .ignore => {
+                self.pending_action.* = .none;
+                self.open = false;
+            },
+            .panic => @panic("transaction dropped unexpectedly"),
+        }
+    }
+
+    fn finishWithSql(self: *Transaction, sql: []const u8) (Allocator.Error || Error)!void {
         const handle = try self.ensureOpenHandle();
         _ = try execOnHandle(handle, self.io_driver, sql);
         self.pending_action.* = .none;
