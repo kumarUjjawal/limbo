@@ -4,6 +4,7 @@ const base_c = @import("../c.zig").bindings;
 const c = @import("c.zig").bindings;
 const errors = @import("../common/error.zig");
 const IoDriver = @import("../common/io_driver.zig").IoDriver;
+const IoOwner = @import("../common/io_driver.zig").IoOwner;
 const Connection = @import("../local/connection.zig").Connection;
 const Changes = @import("changes.zig").Changes;
 const Stats = @import("stats.zig").Stats;
@@ -85,13 +86,14 @@ pub const Operation = struct {
         return Stats.fromCAlloc(allocator, stats);
     }
 
-    pub fn extractConnectionWithDriver(self: *Operation, io_driver: IoDriver) Error!Connection {
+    pub fn extractConnectionWithDriver(self: *Operation, io_driver: IoDriver, io_owner: IoOwner) Error!Connection {
         const handle = self.handle orelse return errors.fail(error.Misuse);
         var connection: ?*const c.turso_connection_t = null;
         try errors.checkStatusCode(c.turso_sync_operation_result_extract_connection(handle, &connection));
         return .{
             .handle = @ptrCast(@constCast(connection)),
             .io_driver = io_driver,
+            .io_owner = io_owner,
         };
     }
 
@@ -99,7 +101,7 @@ pub const Operation = struct {
         return self.extractConnectionWithDriver(.{
             .context = null,
             .drive = noopIoDriver,
-        });
+        }, .{});
     }
 };
 

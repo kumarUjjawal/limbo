@@ -19,7 +19,6 @@ const Error = errors.Error;
 /// execution matches the rest of the binding.
 pub const Database = struct {
     raw: LowLevelDatabase,
-    transport: BlockingHttpTransport,
 
     /// Opens or bootstraps a sync database at `path` using default options.
     pub fn open(path: []const u8) (Allocator.Error || Error)!Database {
@@ -35,13 +34,14 @@ pub const Database = struct {
         errdefer raw.deinit();
 
         var transport = try BlockingHttpTransport.init(db_options);
-        errdefer transport.deinit();
+        var transport_installed = false;
+        errdefer if (!transport_installed) transport.deinit();
 
-        raw.setHttpHandler(transport.handler());
+        try raw.installOwnedTransport(transport);
+        transport_installed = true;
 
         var db: Database = .{
             .raw = raw,
-            .transport = transport,
         };
         errdefer db.deinit();
 
@@ -52,10 +52,9 @@ pub const Database = struct {
         return db;
     }
 
-    /// Releases the sync database and its transport resources.
+    /// Releases the sync database and its retained transport resources.
     pub fn deinit(self: *Database) void {
         self.raw.deinit();
-        self.transport.deinit();
     }
 
     /// Returns the low-level sync driver used by this database.

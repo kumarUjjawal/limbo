@@ -116,27 +116,50 @@ pub const BlockingHttpTransport = struct {
         var prepared = try prepareRequestAlloc(state, item, request);
         defer prepared.deinit(state.allocator);
 
-        var response_writer: std.Io.Writer.Allocating = .init(state.allocator);
-        defer response_writer.deinit();
-
         const payload = if (request.body.len == 0 and !prepared.method.requestHasBody())
             null
         else
             request.body;
 
-        const result = try state.client.fetch(.{
-            .location = .{ .url = prepared.full_url },
-            .method = prepared.method,
-            .payload = payload,
+        const uri = try std.Uri.parse(prepared.full_url);
+        var req = try state.client.request(prepared.method, uri, .{
             .redirect_behavior = .unhandled,
             .extra_headers = prepared.headers,
-            .response_writer = &response_writer.writer,
         });
+        defer req.deinit();
 
-        try item.setStatus(@intCast(@intFromEnum(result.status)));
-        if (response_writer.written().len != 0) {
-            try item.pushBuffer(response_writer.written());
+        if (payload) |body| {
+            req.transfer_encoding = .{ .content_length = body.len };
+            var request_body = try req.sendBodyUnflushed(&.{});
+            try request_body.writer.writeAll(body);
+            try request_body.end();
+            try req.connection.?.flush();
+        } else {
+            try req.sendBodiless();
         }
+
+        var response = try req.receiveHead(&.{});
+        try item.setStatus(@intCast(@intFromEnum(response.head.status)));
+
+        var decompress_buffer: []u8 = &.{};
+        switch (response.head.content_encoding) {
+            .identity => {},
+            .zstd => decompress_buffer = try state.allocator.alloc(u8, std.compress.zstd.default_window_len),
+            .deflate, .gzip => decompress_buffer = try state.allocator.alloc(u8, std.compress.flate.max_window_len),
+            .compress => return error.UnsupportedCompressionMethod,
+        }
+        defer if (response.head.content_encoding != .identity) state.allocator.free(decompress_buffer);
+
+        var transfer_buffer: [64]u8 = undefined;
+        var decompress: std.http.Decompress = undefined;
+        const reader = response.readerDecompressing(&transfer_buffer, &decompress, decompress_buffer);
+
+        var sink: ItemChunkSink = .{ .item = item };
+        streamBodyChunks(reader, &sink) catch |err| switch (err) {
+            error.ReadFailed => return response.bodyErr().?,
+            else => return err,
+        };
+
         try item.done();
     }
 
@@ -206,6 +229,28 @@ pub const BlockingHttpTransport = struct {
         };
     }
 };
+
+const ItemChunkSink = struct {
+    item: *IoItem,
+
+    fn writeChunk(self: *ItemChunkSink, chunk: []const u8) Error!void {
+        if (chunk.len == 0) {
+            return;
+        }
+        try self.item.pushBuffer(chunk);
+    }
+};
+
+fn streamBodyChunks(reader: *std.Io.Reader, sink: anytype) (std.Io.Reader.ShortError || Error)!void {
+    var buffer: [16 * 1024]u8 = undefined;
+    while (true) {
+        const bytes_read = try reader.readSliceShort(&buffer);
+        if (bytes_read == 0) {
+            return;
+        }
+        try sink.writeChunk(buffer[0..bytes_read]);
+    }
+}
 
 fn poisonTransportError(item: *IoItem, err: ProcessError) Error!void {
     var message_buffer: [256]u8 = undefined;
@@ -331,4 +376,29 @@ test "parse http method handles common verbs" {
     try std.testing.expectEqual(std.http.Method.POST, try parseHttpMethod("post"));
     try std.testing.expectEqual(std.http.Method.GET, try parseHttpMethod("GET"));
     try std.testing.expectError(error.InvalidHttpMethod, parseHttpMethod("BREW"));
+}
+
+test "stream body chunks pushes large payloads incrementally" {
+    const Sink = struct {
+        copied: [70_000]u8 = undefined,
+        len: usize = 0,
+        chunks: usize = 0,
+
+        fn writeChunk(self: *@This(), chunk: []const u8) Error!void {
+            @memcpy(self.copied[self.len..][0..chunk.len], chunk);
+            self.len += chunk.len;
+            self.chunks += 1;
+        }
+    };
+
+    var payload: [70_000]u8 = undefined;
+    @memset(&payload, 'a');
+
+    var reader = std.Io.Reader.fixed(&payload);
+    var sink = Sink{};
+
+    try streamBodyChunks(&reader, &sink);
+    try std.testing.expectEqual(@as(usize, payload.len), sink.len);
+    try std.testing.expect(sink.chunks > 1);
+    try std.testing.expectEqualStrings(&payload, sink.copied[0..sink.len]);
 }

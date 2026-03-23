@@ -9,6 +9,7 @@ const std = @import("std");
 const c = @import("../c.zig").bindings;
 const errors = @import("../common/error.zig");
 const IoDriver = @import("../common/io_driver.zig").IoDriver;
+const IoOwner = @import("../common/io_driver.zig").IoOwner;
 const Row = @import("../common/row.zig").Row;
 const Rows = @import("../common/rows.zig").Rows;
 const RunResult = @import("../common/run_result.zig").RunResult;
@@ -58,6 +59,7 @@ pub const Transaction = struct {
     connection_handle: *?*c.turso_connection_t,
     pending_action: *PendingAction,
     io_driver: ?IoDriver = null,
+    io_owner: IoOwner = .{},
     drop_behavior: DropBehavior = .rollback,
     open: bool = true,
 
@@ -67,6 +69,7 @@ pub const Transaction = struct {
     /// behavior immediately. When cleanup cannot complete during `deinit`, the
     /// parent connection retries it before the next SQL operation.
     pub fn deinit(self: *Transaction) void {
+        defer self.io_owner.deinit();
         if (!self.open) {
             return;
         }
@@ -115,7 +118,7 @@ pub const Transaction = struct {
     /// or explicit statement stepping instead.
     pub fn executeWith(self: *Transaction, sql: []const u8, params: BindParams) (Allocator.Error || Error)!u64 {
         _ = try self.ensureOpenHandle();
-        var stmt = try prepareSingleOnHandle(self.connection_handle, self.io_driver, sql);
+        var stmt = try prepareSingleOnHandle(self.connection_handle, self.io_driver, self.io_owner, sql);
         defer stmt.deinit();
         return stmt.executeWith(params);
     }
@@ -123,7 +126,7 @@ pub const Transaction = struct {
     /// Executes a single SQL statement inside the transaction and returns result metadata.
     pub fn run(self: *Transaction, sql: []const u8) (Allocator.Error || Error)!RunResult {
         _ = try self.ensureOpenHandle();
-        var stmt = try prepareSingleOnHandle(self.connection_handle, self.io_driver, sql);
+        var stmt = try prepareSingleOnHandle(self.connection_handle, self.io_driver, self.io_owner, sql);
         defer stmt.deinit();
         return stmt.run();
     }
@@ -135,7 +138,7 @@ pub const Transaction = struct {
         params: BindParams,
     ) (Allocator.Error || Error)!RunResult {
         _ = try self.ensureOpenHandle();
-        var stmt = try prepareSingleOnHandle(self.connection_handle, self.io_driver, sql);
+        var stmt = try prepareSingleOnHandle(self.connection_handle, self.io_driver, self.io_owner, sql);
         defer stmt.deinit();
         return stmt.runWith(params);
     }
@@ -144,7 +147,7 @@ pub const Transaction = struct {
     pub fn executeBatch(self: *Transaction, sql: []const u8) (Allocator.Error || Error)!void {
         _ = try self.ensureOpenHandle();
         var remaining: []const u8 = sql;
-        while (try prepareFirstOnHandle(self.connection_handle, self.io_driver, remaining)) |result| {
+        while (try prepareFirstOnHandle(self.connection_handle, self.io_driver, self.io_owner, remaining)) |result| {
             var prepared = result;
             defer prepared.statement.deinit();
 
@@ -156,13 +159,13 @@ pub const Transaction = struct {
     /// Prepares a single SQL statement inside the transaction.
     pub fn prepare(self: *Transaction, sql: []const u8) (Allocator.Error || Error)!Statement {
         _ = try self.ensureOpenHandle();
-        return prepareSingleOnHandle(self.connection_handle, self.io_driver, sql);
+        return prepareSingleOnHandle(self.connection_handle, self.io_driver, self.io_owner, sql);
     }
 
     /// Returns the first row from `sql` as an owned `Row`.
     pub fn queryRow(self: *Transaction, allocator: Allocator, sql: []const u8) (Allocator.Error || Error)!Row {
         _ = try self.ensureOpenHandle();
-        var stmt = try prepareSingleOnHandle(self.connection_handle, self.io_driver, sql);
+        var stmt = try prepareSingleOnHandle(self.connection_handle, self.io_driver, self.io_owner, sql);
         defer stmt.deinit();
         return stmt.queryRow(allocator);
     }
@@ -175,7 +178,7 @@ pub const Transaction = struct {
         params: BindParams,
     ) (Allocator.Error || Error)!Row {
         _ = try self.ensureOpenHandle();
-        var stmt = try prepareSingleOnHandle(self.connection_handle, self.io_driver, sql);
+        var stmt = try prepareSingleOnHandle(self.connection_handle, self.io_driver, self.io_owner, sql);
         defer stmt.deinit();
         return stmt.queryRowWith(allocator, params);
     }
@@ -183,7 +186,7 @@ pub const Transaction = struct {
     /// Returns the first row from `sql` inside the transaction, if any.
     pub fn get(self: *Transaction, allocator: Allocator, sql: []const u8) (Allocator.Error || Error)!?Row {
         _ = try self.ensureOpenHandle();
-        var stmt = try prepareSingleOnHandle(self.connection_handle, self.io_driver, sql);
+        var stmt = try prepareSingleOnHandle(self.connection_handle, self.io_driver, self.io_owner, sql);
         defer stmt.deinit();
         return stmt.get(allocator);
     }
@@ -196,7 +199,7 @@ pub const Transaction = struct {
         params: BindParams,
     ) (Allocator.Error || Error)!?Row {
         _ = try self.ensureOpenHandle();
-        var stmt = try prepareSingleOnHandle(self.connection_handle, self.io_driver, sql);
+        var stmt = try prepareSingleOnHandle(self.connection_handle, self.io_driver, self.io_owner, sql);
         defer stmt.deinit();
         return stmt.getWith(allocator, params);
     }
@@ -221,7 +224,7 @@ pub const Transaction = struct {
     /// Returns every row from `sql` inside the transaction as owned data.
     pub fn all(self: *Transaction, allocator: Allocator, sql: []const u8) (Allocator.Error || Error)!Rows {
         _ = try self.ensureOpenHandle();
-        var stmt = try prepareSingleOnHandle(self.connection_handle, self.io_driver, sql);
+        var stmt = try prepareSingleOnHandle(self.connection_handle, self.io_driver, self.io_owner, sql);
         defer stmt.deinit();
         return stmt.all(allocator);
     }
@@ -234,7 +237,7 @@ pub const Transaction = struct {
         params: BindParams,
     ) (Allocator.Error || Error)!Rows {
         _ = try self.ensureOpenHandle();
-        var stmt = try prepareSingleOnHandle(self.connection_handle, self.io_driver, sql);
+        var stmt = try prepareSingleOnHandle(self.connection_handle, self.io_driver, self.io_owner, sql);
         defer stmt.deinit();
         return stmt.allWith(allocator, params);
     }
@@ -351,7 +354,7 @@ pub const Transaction = struct {
 
 fn execOnHandle(handle: *c.turso_connection_t, io_driver: ?IoDriver, sql: []const u8) (Allocator.Error || Error)!u64 {
     var connection_handle_slot: ?*c.turso_connection_t = handle;
-    var stmt = try prepareSingleOnHandle(&connection_handle_slot, io_driver, sql);
+    var stmt = try prepareSingleOnHandle(&connection_handle_slot, io_driver, .{}, sql);
     defer stmt.deinit();
     return stmt.execute();
 }
@@ -359,6 +362,7 @@ fn execOnHandle(handle: *c.turso_connection_t, io_driver: ?IoDriver, sql: []cons
 fn prepareSingleOnHandle(
     connection_handle: *?*c.turso_connection_t,
     io_driver: ?IoDriver,
+    io_owner: IoOwner,
     sql: []const u8,
 ) (Allocator.Error || Error)!Statement {
     const handle = connection_handle.* orelse return errors.fail(error.Misuse);
@@ -375,12 +379,14 @@ fn prepareSingleOnHandle(
         .handle = statement,
         .connection_handle_slot = connection_handle,
         .io_driver = io_driver,
+        .io_owner = io_owner.clone(),
     };
 }
 
 fn prepareFirstOnHandle(
     connection_handle: *?*c.turso_connection_t,
     io_driver: ?IoDriver,
+    io_owner: IoOwner,
     sql: []const u8,
 ) (Allocator.Error || Error)!?PreparedSlice {
     const handle = connection_handle.* orelse return errors.fail(error.Misuse);
@@ -401,6 +407,7 @@ fn prepareFirstOnHandle(
             .handle = statement_handle,
             .connection_handle_slot = connection_handle,
             .io_driver = io_driver,
+            .io_owner = io_owner.clone(),
         };
         prepared.deinit();
         return errors.fail(error.UnexpectedStatus);
@@ -411,6 +418,7 @@ fn prepareFirstOnHandle(
             .handle = statement_handle,
             .connection_handle_slot = connection_handle,
             .io_driver = io_driver,
+            .io_owner = io_owner.clone(),
         },
         .tail_index = tail_index,
     };

@@ -8,6 +8,7 @@ const bind_params = @import("../common/bind_params.zig");
 const Column = @import("../common/column.zig").Column;
 const errors = @import("../common/error.zig");
 const IoDriver = @import("../common/io_driver.zig").IoDriver;
+const IoOwner = @import("../common/io_driver.zig").IoOwner;
 const Row = @import("../common/row.zig").Row;
 const Rows = @import("../common/rows.zig").Rows;
 const RunResult = @import("../common/run_result.zig").RunResult;
@@ -36,6 +37,7 @@ pub const Statement = struct {
     handle: ?*c.turso_statement_t,
     connection_handle_slot: ?*?*c.turso_connection_t = null,
     io_driver: ?IoDriver = null,
+    io_owner: IoOwner = .{},
 
     /// Releases the statement handle.
     ///
@@ -47,6 +49,7 @@ pub const Statement = struct {
             c.turso_statement_deinit(handle);
             self.handle = null;
         }
+        self.io_owner.deinit();
     }
 
     /// Executes the statement to completion.

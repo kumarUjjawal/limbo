@@ -18,6 +18,30 @@ pub const IoDriver = struct {
     }
 };
 
+/// Optional retained owner for an `IoDriver` context.
+///
+/// Sync handles use this to keep the underlying IO state alive while borrowed
+/// connections, statements, and transactions are still active.
+pub const IoOwner = struct {
+    context: ?*anyopaque = null,
+    retain: ?*const fn (context: ?*anyopaque) void = null,
+    release: ?*const fn (context: ?*anyopaque) void = null,
+
+    pub fn clone(self: IoOwner) IoOwner {
+        if (self.retain) |retain| {
+            retain(self.context);
+        }
+        return self;
+    }
+
+    pub fn deinit(self: *IoOwner) void {
+        if (self.release) |release| {
+            release(self.context);
+        }
+        self.* = .{};
+    }
+};
+
 test "io driver forwards context and statement" {
     const Fixture = struct {
         var seen_context: ?*anyopaque = null;
@@ -39,4 +63,35 @@ test "io driver forwards context and statement" {
     try driver.run(expected_statement);
     try std.testing.expectEqual(expected_context, Fixture.seen_context);
     try std.testing.expectEqual(expected_statement, Fixture.seen_statement);
+}
+
+test "io owner clone and deinit retain context" {
+    const Fixture = struct {
+        var retain_calls: usize = 0;
+        var release_calls: usize = 0;
+
+        fn retain(_: ?*anyopaque) void {
+            retain_calls += 1;
+        }
+
+        fn release(_: ?*anyopaque) void {
+            release_calls += 1;
+        }
+    };
+
+    Fixture.retain_calls = 0;
+    Fixture.release_calls = 0;
+
+    var owner: IoOwner = .{
+        .context = @ptrFromInt(1),
+        .retain = Fixture.retain,
+        .release = Fixture.release,
+    };
+
+    var clone = owner.clone();
+    try std.testing.expectEqual(@as(usize, 1), Fixture.retain_calls);
+
+    clone.deinit();
+    owner.deinit();
+    try std.testing.expectEqual(@as(usize, 2), Fixture.release_calls);
 }

@@ -3,8 +3,10 @@
 //! These options keep embedded-replica configuration explicit and blocking.
 const std = @import("std");
 const c = @import("c.zig").bindings;
+const errors = @import("../common/error.zig");
 
 const Allocator = std.mem.Allocator;
+const Error = errors.Error;
 
 /// Default client name used by the sync engine.
 pub const default_client_name = "turso-sync-zig";
@@ -59,7 +61,7 @@ pub const RemoteEncryptionOptions = struct {
 /// Partial bootstrap strategy for partial sync.
 pub const PartialBootstrapStrategy = union(enum) {
     /// Bootstrap the first `length` bytes from the remote database.
-    prefix: i32,
+    prefix: usize,
     /// Bootstrap the pages touched by a SQL query.
     query: []const u8,
 };
@@ -84,7 +86,7 @@ pub const DatabaseOptions = struct {
     /// Client name prefix used by the sync engine.
     client_name: []const u8 = default_client_name,
     /// Optional long-poll timeout for `waitChanges`.
-    long_poll_timeout_ms: ?i32 = null,
+    long_poll_timeout_ms: ?u32 = null,
     /// Whether a fresh database should bootstrap immediately when metadata is missing.
     bootstrap_if_empty: bool = true,
     /// Optional partial sync configuration.
@@ -106,7 +108,8 @@ pub const DatabaseConfigStrings = struct {
         allocator: Allocator,
         path: []const u8,
         options: DatabaseOptions,
-    ) Allocator.Error!DatabaseConfigStrings {
+    ) (Allocator.Error || Error)!DatabaseConfigStrings {
+        try validateOptions(options);
         return .{
             .path = try allocator.dupeZ(u8, path),
             .remote_url = if (options.remote_url) |remote_url|
@@ -161,7 +164,10 @@ pub const DatabaseConfigStrings = struct {
             .path = self.path.ptr,
             .remote_url = if (self.remote_url) |remote_url| remote_url.ptr else null,
             .client_name = self.client_name.ptr,
-            .long_poll_timeout_ms = options.long_poll_timeout_ms orelse 0,
+            .long_poll_timeout_ms = if (options.long_poll_timeout_ms) |timeout_ms|
+                @intCast(timeout_ms)
+            else
+                0,
             .bootstrap_if_empty = options.bootstrap_if_empty,
             .reserved_bytes = if (options.remote_encryption) |remote_encryption|
                 if (remote_encryption.cipher) |cipher| cipher.reservedBytes() else 0
@@ -169,7 +175,7 @@ pub const DatabaseConfigStrings = struct {
                 0,
             .partial_bootstrap_strategy_prefix = if (options.partial_sync) |partial_sync|
                 switch (partial_sync.bootstrap_strategy) {
-                    .prefix => |prefix| prefix,
+                    .prefix => |prefix| @intCast(prefix),
                     else => 0,
                 }
             else
@@ -197,6 +203,25 @@ pub const DatabaseConfigStrings = struct {
         };
     }
 };
+
+fn validateOptions(options: DatabaseOptions) Error!void {
+    if (options.long_poll_timeout_ms) |timeout_ms| {
+        if (timeout_ms > std.math.maxInt(i32)) {
+            return errors.failMessage(error.Misuse, "long_poll_timeout_ms exceeds the supported range");
+        }
+    }
+
+    if (options.partial_sync) |partial_sync| {
+        switch (partial_sync.bootstrap_strategy) {
+            .prefix => |prefix| {
+                if (prefix > std.math.maxInt(i32)) {
+                    return errors.failMessage(error.Misuse, "partial sync prefix exceeds the supported range");
+                }
+            },
+            .query => {},
+        }
+    }
+}
 
 test "remote encryption derives reserved bytes" {
     var strings = try DatabaseConfigStrings.fromOptions(std.testing.allocator, "local.db", .{
@@ -257,4 +282,26 @@ test "partial sync query strategy keeps query string" {
     try std.testing.expectEqualStrings("SELECT * FROM t", std.mem.span(config.partial_bootstrap_strategy_query));
     try std.testing.expectEqual(@as(usize, 4096), config.partial_bootstrap_segment_size);
     try std.testing.expect(config.partial_bootstrap_prefetch);
+}
+
+test "long poll timeout rejects values larger than i32" {
+    try std.testing.expectError(error.Misuse, DatabaseConfigStrings.fromOptions(
+        std.testing.allocator,
+        "local.db",
+        .{
+            .long_poll_timeout_ms = std.math.maxInt(u32),
+        },
+    ));
+}
+
+test "partial sync prefix rejects values larger than i32" {
+    try std.testing.expectError(error.Misuse, DatabaseConfigStrings.fromOptions(
+        std.testing.allocator,
+        "local.db",
+        .{
+            .partial_sync = .{
+                .bootstrap_strategy = .{ .prefix = @as(usize, std.math.maxInt(i32)) + 1 },
+            },
+        },
+    ));
 }

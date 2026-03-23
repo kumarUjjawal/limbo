@@ -178,6 +178,112 @@ test "sync database accepts remote encryption key without cipher" {
     });
 }
 
+test "sync database connections stay usable after database deinit" {
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const db_path = try support.tempPathAlloc(std.testing.allocator, &tmp_dir, "deinit-parent.db");
+    defer std.testing.allocator.free(db_path);
+
+    var db = try turso.sync.Database.openWithOptions(db_path, .{
+        .bootstrap_if_empty = false,
+    });
+
+    var conn = try db.connect();
+    defer conn.deinit();
+
+    _ = try conn.execute("CREATE TABLE t(x INTEGER)");
+
+    var stmt = try conn.prepare("INSERT INTO t VALUES (?1)");
+    defer stmt.deinit();
+
+    db.deinit();
+
+    try stmt.bindInt(1, 1);
+    _ = try stmt.execute();
+
+    var tx = try conn.transaction();
+    defer tx.deinit();
+    _ = try tx.execute("INSERT INTO t VALUES (2)");
+    try tx.commit();
+
+    var row = try conn.queryRow(std.testing.allocator, "SELECT COUNT(*) FROM t");
+    defer row.deinit(std.testing.allocator);
+
+    try std.testing.expect(switch ((try row.value(0)).*) {
+        .integer => |count| count == 2,
+        else => false,
+    });
+}
+
+test "sync low-level connections stay usable after database deinit" {
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const db_path = try support.tempPathAlloc(std.testing.allocator, &tmp_dir, "deinit-raw.db");
+    defer std.testing.allocator.free(db_path);
+
+    var db = try turso.sync.LowLevelDatabase.init(db_path, .{
+        .bootstrap_if_empty = false,
+    });
+
+    var create_operation = try db.createOperation();
+    defer create_operation.deinit();
+    try driveOperationWithDatabase(&db, &create_operation);
+
+    var connect_operation = try db.connectOperation();
+    defer connect_operation.deinit();
+    try driveOperationWithDatabase(&db, &connect_operation);
+
+    var conn = try db.extractConnection(&connect_operation);
+    defer conn.deinit();
+
+    db.deinit();
+
+    _ = try conn.execute("CREATE TABLE t(x INTEGER)");
+    _ = try conn.execute("INSERT INTO t VALUES (1), (2)");
+
+    var row = try conn.queryRow(std.testing.allocator, "SELECT COUNT(*) FROM t");
+    defer row.deinit(std.testing.allocator);
+
+    try std.testing.expect(switch ((try row.value(0)).*) {
+        .integer => |count| count == 2,
+        else => false,
+    });
+}
+
+test "sync file io surfaces detailed poisoned error messages" {
+    turso.clearLastErrorDetails();
+    defer turso.clearLastErrorDetails();
+
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    try tmp_dir.dir.writeFile(.{
+        .sub_path = "not-a-dir",
+        .data = "x",
+    });
+
+    const db_path = try support.tempPathAlloc(std.testing.allocator, &tmp_dir, "not-a-dir/replica.db");
+    defer std.testing.allocator.free(db_path);
+
+    var db = try turso.sync.LowLevelDatabase.init(db_path, .{
+        .bootstrap_if_empty = false,
+    });
+    defer db.deinit();
+
+    var create_operation = try db.createOperation();
+    defer create_operation.deinit();
+
+    try std.testing.expectError(error.Database, driveOperationWithDatabase(&db, &create_operation));
+
+    const message = (try turso.lastErrorMessageAlloc(std.testing.allocator)).?;
+    defer std.testing.allocator.free(message);
+
+    try std.testing.expect(std.mem.indexOf(u8, message, "full read failed for") != null);
+    try std.testing.expect(std.mem.indexOf(u8, message, "NotDir") != null);
+}
+
 fn processFullRead(item: *turso.sync.IoItem) !void {
     const request = try item.fullReadRequest();
     var file = openFileForRead(request.path) catch |err| switch (err) {

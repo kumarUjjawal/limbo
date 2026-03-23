@@ -6,6 +6,7 @@ const std = @import("std");
 const c = @import("../c.zig").bindings;
 const errors = @import("../common/error.zig");
 const IoDriver = @import("../common/io_driver.zig").IoDriver;
+const IoOwner = @import("../common/io_driver.zig").IoOwner;
 const Row = @import("../common/row.zig").Row;
 const Rows = @import("../common/rows.zig").Rows;
 const RunResult = @import("../common/run_result.zig").RunResult;
@@ -35,6 +36,7 @@ pub const Connection = struct {
     handle: ?*c.turso_connection_t,
     pending_tx_action: PendingAction = .none,
     io_driver: ?IoDriver = null,
+    io_owner: IoOwner = .{},
 
     /// Releases the connection handle.
     pub fn deinit(self: *Connection) void {
@@ -43,6 +45,7 @@ pub const Connection = struct {
             self.handle = null;
         }
         self.pending_tx_action = .none;
+        self.io_owner.deinit();
     }
 
     /// Executes a single SQL statement to completion.
@@ -248,6 +251,7 @@ pub const Connection = struct {
             .connection_handle = &self.handle,
             .pending_action = &self.pending_tx_action,
             .io_driver = self.io_driver,
+            .io_owner = self.io_owner.clone(),
         };
     }
 
@@ -271,6 +275,7 @@ pub const Connection = struct {
             .handle = statement,
             .connection_handle_slot = &self.handle,
             .io_driver = self.io_driver,
+            .io_owner = self.io_owner.clone(),
         };
     }
 
@@ -298,6 +303,7 @@ pub const Connection = struct {
                 .handle = statement_handle,
                 .connection_handle_slot = &self.handle,
                 .io_driver = self.io_driver,
+                .io_owner = self.io_owner.clone(),
             };
             prepared.deinit();
             return errors.fail(error.UnexpectedStatus);
@@ -308,6 +314,7 @@ pub const Connection = struct {
                 .handle = statement_handle,
                 .connection_handle_slot = &self.handle,
                 .io_driver = self.io_driver,
+                .io_owner = self.io_owner.clone(),
             },
             .tail_index = tail_index,
         };

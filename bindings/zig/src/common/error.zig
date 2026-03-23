@@ -103,6 +103,11 @@ pub fn fail(err: Error) Error {
     return failWithStatus(err, null, null);
 }
 
+/// Records a binding error with a synthetic message and returns it.
+pub fn failMessage(err: Error, message: []const u8) Error {
+    return failWithStatus(err, null, message);
+}
+
 /// Records a binding error without returning it.
 pub fn record(err: Error) void {
     setLastErrorDetails(err, null, null);
