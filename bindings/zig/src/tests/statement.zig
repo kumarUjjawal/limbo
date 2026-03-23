@@ -476,7 +476,7 @@ test "statement queryRow returns QueryReturnedNoRows for empty results" {
     try std.testing.expectError(error.QueryReturnedNoRows, stmt.queryRow(std.testing.allocator));
 }
 
-test "statement run get and query provide convenience helpers" {
+test "statement run get and all provide convenience helpers" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
@@ -520,7 +520,7 @@ test "statement run get and query provide convenience helpers" {
     var all_stmt = try fixture.conn.prepare("SELECT id, name FROM users ORDER BY id");
     defer all_stmt.deinit();
 
-    var rows = try all_stmt.query(std.testing.allocator);
+    var rows = try all_stmt.all(std.testing.allocator);
     defer rows.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 2), rows.len());
     try std.testing.expect(switch ((try (try rows.row(1)).valueByName("name")).*) {
@@ -528,7 +528,7 @@ test "statement run get and query provide convenience helpers" {
         else => false,
     });
 
-    var rows_again = try all_stmt.query(std.testing.allocator);
+    var rows_again = try all_stmt.all(std.testing.allocator);
     defer rows_again.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 2), rows_again.len());
     try std.testing.expect(switch ((try (try rows_again.row(0)).valueByName("name")).*) {
@@ -590,7 +590,7 @@ test "statement bindParams runWith getWith and allWith support reusable paramete
     });
 }
 
-test "statement executeWith and queryWith complete parameterized one-shot APIs" {
+test "statement executeWith and allWith complete parameterized one-shot APIs" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
@@ -627,7 +627,7 @@ test "statement executeWith and queryWith complete parameterized one-shot APIs" 
         else => false,
     });
 
-    var rows = try query.queryWith(std.testing.allocator, .{
+    var rows = try query.allWith(std.testing.allocator, .{
         .positional = &.{.{ .integer = 30 }},
     });
     defer rows.deinit(std.testing.allocator);

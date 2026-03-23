@@ -10,6 +10,8 @@ The next evolution of SQLite: A high-performance, SQLite-compatible database lib
 - **Blocking API**: Straightforward local and embedded-replica APIs that fit direct Zig control flow
 - **In-Process**: Runs directly inside your application
 - **Prepared Statements**: Reuse statements with positional, named, and numbered parameter binding
+- **One-Shot Query Helpers**: Use `queryRow`, `get`, and `all` with matching `With` variants for parameterized calls
+- **Batch and Introspection Helpers**: Use `executeBatch`, `prepareFirst`, `busyTimeoutMs`, `isAutocommit`, `lastInsertRowId`, `parameterCount`, `namedPosition`, and `columnDeclTypeAlloc`
 - **Transactions**: Deferred, immediate, and exclusive transactions with explicit commit and rollback
 - **Owned Results**: Rows, text values, and blob values can be copied into Zig-owned memory
 - **Embedded Replica Sync**: Sync with Turso Cloud using `turso.sync.Database`
@@ -255,7 +257,7 @@ const run_result = try conn.runWith("INSERT INTO users (name) VALUES (?1)", .{
 });
 _ = run_result;
 
-var rows = try conn.queryWith(allocator, "SELECT id, name FROM users WHERE id >= ?1 ORDER BY id", .{
+var rows = try conn.allWith(allocator, "SELECT id, name FROM users WHERE id >= ?1 ORDER BY id", .{
     .positional = &.{.{ .integer = 1 }},
 });
 defer rows.deinit(allocator);
@@ -302,7 +304,7 @@ while (try query_stmt.step() == .row) {
 }
 ```
 
-Prepared statements also expose `queryRowWith`, `getWith`, `queryWith`, `allWith`, `parameterCount`, `namedPosition`, `columnCount`, `columnNameAlloc`, and `columnDeclTypeAlloc`.
+Prepared statements also expose `queryRowWith`, `getWith`, `allWith`, `parameterCount`, `namedPosition`, `columnCount`, `columnNameAlloc`, and `columnDeclTypeAlloc`.
 
 ### Working with Results
 

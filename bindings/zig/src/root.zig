@@ -51,11 +51,11 @@
 //! `Connection.transactionWithBehavior`.
 //!
 //! Core execution helpers are available through `Connection.execute`,
-//! `Connection.executeWith`, `Connection.query`, `Connection.queryWith`, and
-//! the matching `Transaction` and `Statement` methods. Convenience helpers
-//! remain available through `run`, `get`, `all`, `pragma`, `pragmaQuery`, and
-//! `pragmaUpdate`, with matching `With` variants for parameterized calls where
-//! applicable. `all` is an alias for eagerly collecting the full result set.
+//! `Connection.executeWith`, and the matching `Transaction` and `Statement`
+//! methods. Convenience helpers remain available through `run`, `get`, `all`,
+//! `pragma`, `pragmaQuery`, and `pragmaUpdate`, with matching `With` variants
+//! for parameterized calls where applicable. `all` eagerly collects the full
+//! result set into owned Zig memory.
 //!
 //! When a call fails, `lastErrorDetails` and `lastErrorMessageAlloc` expose
 //! the native status and message captured for the most recent failure on the

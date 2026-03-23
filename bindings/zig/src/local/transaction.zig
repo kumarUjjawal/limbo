@@ -205,23 +205,6 @@ pub const Transaction = struct {
     }
 
     /// Returns every row from `sql` inside the transaction as owned data.
-    ///
-    /// This eagerly collects the full result set into owned Zig memory.
-    pub fn query(self: *Transaction, allocator: Allocator, sql: []const u8) (Allocator.Error || Error)!Rows {
-        return self.all(allocator, sql);
-    }
-
-    /// Returns every row from `sql` inside the transaction after applying `params`.
-    pub fn queryWith(
-        self: *Transaction,
-        allocator: Allocator,
-        sql: []const u8,
-        params: BindParams,
-    ) (Allocator.Error || Error)!Rows {
-        return self.allWith(allocator, sql, params);
-    }
-
-    /// Returns every row from `sql` inside the transaction as owned data.
     pub fn all(self: *Transaction, allocator: Allocator, sql: []const u8) (Allocator.Error || Error)!Rows {
         _ = try self.ensureOpenHandle();
         var stmt = try prepareSingleOnHandle(self.connection_handle, self.io_driver, self.io_owner, sql);

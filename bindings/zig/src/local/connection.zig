@@ -162,23 +162,6 @@ pub const Connection = struct {
     }
 
     /// Returns every row from `sql` as owned data.
-    ///
-    /// This eagerly collects the full result set into owned Zig memory.
-    pub fn query(self: *Connection, allocator: Allocator, sql: []const u8) (Allocator.Error || Error)!Rows {
-        return self.all(allocator, sql);
-    }
-
-    /// Returns every row from `sql` after applying `params` as owned data.
-    pub fn queryWith(
-        self: *Connection,
-        allocator: Allocator,
-        sql: []const u8,
-        params: BindParams,
-    ) (Allocator.Error || Error)!Rows {
-        return self.allWith(allocator, sql, params);
-    }
-
-    /// Returns every row from `sql` as owned data.
     pub fn all(self: *Connection, allocator: Allocator, sql: []const u8) (Allocator.Error || Error)!Rows {
         var stmt = try self.prepare(sql);
         defer stmt.deinit();

@@ -58,7 +58,12 @@ pub const Database = struct {
             if (self.owned_transport) |*owned_transport| {
                 owned_transport.deinit();
             }
-            self.owned_transport = transport;
+            var transport_value = transport;
+            transport_value.setProgressHook(.{
+                .context = self,
+                .notify = stepTransportProgress,
+            });
+            self.owned_transport = transport_value;
             if (self.owned_transport) |*owned_transport| {
                 self.http_handler = owned_transport.handler();
             }
@@ -116,6 +121,7 @@ pub const Database = struct {
                     error.AlreadyPoisoned => {},
                     else => try item.poison(@errorName(err)),
                 };
+                try self.stepIoCallbacks();
             }
             try self.stepIoCallbacks();
         }
@@ -262,9 +268,11 @@ pub const Database = struct {
     /// Extracts a SQL connection from a completed connect operation.
     pub fn extractConnection(self: *Database, operation: *Operation) Error!Connection {
         const state = self.state orelse return errors.fail(error.Misuse);
+        var owner = state.ioOwnerRetained();
+        errdefer owner.deinit();
         return operation.extractConnectionWithDriver(
             state.statementIoDriver(),
-            state.ioOwnerRetained(),
+            owner,
         );
     }
 
@@ -301,6 +309,11 @@ fn releaseState(context: ?*anyopaque) void {
 fn driveStatementIo(context: ?*anyopaque, _: *base_c.turso_statement_t) Error!void {
     const state: *Database.State = @ptrCast(@alignCast(context orelse return errors.fail(error.Misuse)));
     return state.driveIo();
+}
+
+fn stepTransportProgress(context: ?*anyopaque) Error!void {
+    const state: *Database.State = @ptrCast(@alignCast(context orelse return errors.fail(error.Misuse)));
+    return state.stepIoCallbacks();
 }
 
 fn processFullRead(item: *IoItem) InternalError!void {
@@ -412,4 +425,16 @@ fn openDirPath(path: []const u8) !std.fs.Dir {
 fn syncDir(dir: std.fs.Dir) !void {
     const dir_file = std.fs.File{ .handle = dir.fd };
     return dir_file.sync();
+}
+
+test "extractConnection releases retained owner on failure" {
+    var state: Database.State = .{
+        .handle = null,
+    };
+    var db: Database = .{ .state = &state };
+    var operation: Operation = .{ .handle = null };
+
+    try std.testing.expectEqual(@as(usize, 1), state.ref_count.load(.monotonic));
+    try std.testing.expectError(error.Misuse, db.extractConnection(&operation));
+    try std.testing.expectEqual(@as(usize, 1), state.ref_count.load(.monotonic));
 }

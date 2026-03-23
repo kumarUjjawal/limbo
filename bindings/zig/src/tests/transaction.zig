@@ -236,7 +236,7 @@ test "transaction drop behavior getter and setter round-trip" {
     try std.testing.expectEqual(turso.TransactionDropBehavior.ignore, tx.dropBehavior());
 }
 
-test "transaction run get query and pragma mirror connection helpers" {
+test "transaction run get all and pragma mirror connection helpers" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
@@ -256,7 +256,7 @@ test "transaction run get query and pragma mirror connection helpers" {
         else => false,
     });
 
-    var rows = try tx.query(std.testing.allocator, "SELECT id, name FROM users");
+    var rows = try tx.all(std.testing.allocator, "SELECT id, name FROM users");
     defer rows.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 1), rows.len());
 
@@ -338,7 +338,7 @@ test "transaction runWith getWith and allWith bind parameters" {
     try tx.rollback();
 }
 
-test "transaction executeWith and queryWith bind parameters" {
+test "transaction executeWith and allWith bind parameters" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
@@ -372,7 +372,7 @@ test "transaction executeWith and queryWith bind parameters" {
         else => false,
     });
 
-    var rows = try tx.queryWith(std.testing.allocator, "SELECT id, name FROM users WHERE age >= ?1 ORDER BY id", .{
+    var rows = try tx.allWith(std.testing.allocator, "SELECT id, name FROM users WHERE age >= ?1 ORDER BY id", .{
         .positional = &.{.{ .integer = 30 }},
     });
     defer rows.deinit(std.testing.allocator);

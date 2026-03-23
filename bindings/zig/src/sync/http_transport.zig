@@ -14,6 +14,17 @@ const ProcessError = Error || std.http.Client.FetchError || Allocator.Error || e
     InvalidRemoteUrlScheme,
 };
 
+const ProgressHook = struct {
+    context: ?*anyopaque = null,
+    notify: ?*const fn (context: ?*anyopaque) Error!void = null,
+
+    fn run(self: ProgressHook) Error!void {
+        if (self.notify) |notify| {
+            try notify(self.context);
+        }
+    }
+};
+
 pub const BlockingHttpTransport = struct {
     state: ?*State,
 
@@ -22,6 +33,7 @@ pub const BlockingHttpTransport = struct {
         client: std.http.Client,
         base_url: ?[]u8,
         auth_token: ?[]u8,
+        progress: ProgressHook = .{},
     };
 
     const PreparedRequest = struct {
@@ -89,6 +101,11 @@ pub const BlockingHttpTransport = struct {
         };
     }
 
+    pub fn setProgressHook(self: *BlockingHttpTransport, progress: ProgressHook) void {
+        const state = self.state orelse return;
+        state.progress = progress;
+    }
+
     fn run(context: ?*anyopaque, item: *IoItem) Error!void {
         const state: *State = @ptrCast(@alignCast(context orelse return errors.fail(error.Misuse)));
         process(state, item) catch |err| switch (err) {
@@ -107,7 +124,7 @@ pub const BlockingHttpTransport = struct {
             error.UnexpectedStatus => return error.UnexpectedStatus,
             error.NegativeValue => return error.NegativeValue,
             error.SyncIoHandlerRequired => return error.SyncIoHandlerRequired,
-            else => try poisonTransportError(item, err),
+            else => try poisonTransportError(item, state.progress, err),
         };
     }
 
@@ -139,7 +156,7 @@ pub const BlockingHttpTransport = struct {
         }
 
         var response = try req.receiveHead(&.{});
-        try item.setStatus(@intCast(@intFromEnum(response.head.status)));
+        try setStatusAndNotify(item, state.progress, @intCast(@intFromEnum(response.head.status)));
 
         var decompress_buffer: []u8 = &.{};
         switch (response.head.content_encoding) {
@@ -154,13 +171,16 @@ pub const BlockingHttpTransport = struct {
         var decompress: std.http.Decompress = undefined;
         const reader = response.readerDecompressing(&transfer_buffer, &decompress, decompress_buffer);
 
-        var sink: ItemChunkSink = .{ .item = item };
+        var sink: ItemChunkSink = .{
+            .item = item,
+            .progress = state.progress,
+        };
         streamBodyChunks(reader, &sink) catch |err| switch (err) {
             error.ReadFailed => return response.bodyErr().?,
             else => return err,
         };
 
-        try item.done();
+        try doneAndNotify(item, state.progress);
     }
 
     fn prepareRequestAlloc(
@@ -232,12 +252,10 @@ pub const BlockingHttpTransport = struct {
 
 const ItemChunkSink = struct {
     item: *IoItem,
+    progress: ProgressHook,
 
     fn writeChunk(self: *ItemChunkSink, chunk: []const u8) Error!void {
-        if (chunk.len == 0) {
-            return;
-        }
-        try self.item.pushBuffer(chunk);
+        try pushChunkAndNotify(self.item, self.progress, chunk);
     }
 };
 
@@ -252,7 +270,30 @@ fn streamBodyChunks(reader: *std.Io.Reader, sink: anytype) (std.Io.Reader.ShortE
     }
 }
 
-fn poisonTransportError(item: *IoItem, err: ProcessError) Error!void {
+fn setStatusAndNotify(item: anytype, progress: ProgressHook, status_code: i32) Error!void {
+    try item.setStatus(status_code);
+    try progress.run();
+}
+
+fn pushChunkAndNotify(item: anytype, progress: ProgressHook, chunk: []const u8) Error!void {
+    if (chunk.len == 0) {
+        return;
+    }
+    try item.pushBuffer(chunk);
+    try progress.run();
+}
+
+fn doneAndNotify(item: anytype, progress: ProgressHook) Error!void {
+    try item.done();
+    try progress.run();
+}
+
+fn poisonAndNotify(item: anytype, progress: ProgressHook, message: []const u8) Error!void {
+    try item.poison(message);
+    try progress.run();
+}
+
+fn poisonTransportError(item: *IoItem, progress: ProgressHook, err: ProcessError) Error!void {
     var message_buffer: [256]u8 = undefined;
     const message = switch (err) {
         error.MissingRemoteUrl => "remote_url is not available",
@@ -262,7 +303,7 @@ fn poisonTransportError(item: *IoItem, err: ProcessError) Error!void {
         error.OutOfMemory => "out of memory while processing HTTP request",
         else => std.fmt.bufPrint(&message_buffer, "http request failed: {s}", .{@errorName(err)}) catch "http request failed",
     };
-    try item.poison(message);
+    try poisonAndNotify(item, progress, message);
 }
 
 fn resolveRequestUrlAlloc(
@@ -401,4 +442,64 @@ test "stream body chunks pushes large payloads incrementally" {
     try std.testing.expectEqual(@as(usize, payload.len), sink.len);
     try std.testing.expect(sink.chunks > 1);
     try std.testing.expectEqualStrings(&payload, sink.copied[0..sink.len]);
+}
+
+test "transport progress helpers notify after status chunk done and poison" {
+    const Fixture = struct {
+        const FakeItem = struct {
+            status: ?i32 = null,
+            chunk_count: usize = 0,
+            done_calls: usize = 0,
+            poison_message: ?[]const u8 = null,
+
+            fn setStatus(self: *FakeItem, status_code: i32) Error!void {
+                self.status = status_code;
+            }
+
+            fn pushBuffer(self: *FakeItem, chunk: []const u8) Error!void {
+                _ = chunk;
+                self.chunk_count += 1;
+            }
+
+            fn done(self: *FakeItem) Error!void {
+                self.done_calls += 1;
+            }
+
+            fn poison(self: *FakeItem, message: []const u8) Error!void {
+                self.poison_message = message;
+            }
+        };
+
+        var progress_calls: usize = 0;
+
+        fn notify(_: ?*anyopaque) Error!void {
+            progress_calls += 1;
+        }
+    };
+
+    Fixture.progress_calls = 0;
+    var item = Fixture.FakeItem{};
+    const progress: ProgressHook = .{
+        .notify = Fixture.notify,
+    };
+
+    try setStatusAndNotify(&item, progress, 200);
+    try std.testing.expectEqual(@as(?i32, 200), item.status);
+    try std.testing.expectEqual(@as(usize, 1), Fixture.progress_calls);
+
+    try pushChunkAndNotify(&item, progress, "hello");
+    try std.testing.expectEqual(@as(usize, 1), item.chunk_count);
+    try std.testing.expectEqual(@as(usize, 2), Fixture.progress_calls);
+
+    try pushChunkAndNotify(&item, progress, "");
+    try std.testing.expectEqual(@as(usize, 1), item.chunk_count);
+    try std.testing.expectEqual(@as(usize, 2), Fixture.progress_calls);
+
+    try doneAndNotify(&item, progress);
+    try std.testing.expectEqual(@as(usize, 1), item.done_calls);
+    try std.testing.expectEqual(@as(usize, 3), Fixture.progress_calls);
+
+    try poisonAndNotify(&item, progress, "bad response");
+    try std.testing.expectEqualStrings("bad response", item.poison_message.?);
+    try std.testing.expectEqual(@as(usize, 4), Fixture.progress_calls);
 }

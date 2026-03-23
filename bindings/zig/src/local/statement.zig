@@ -493,20 +493,6 @@ pub const Statement = struct {
     /// The statement continues from its current execution state, uses its
     /// current bindings, and is reset before returning so it can be reused
     /// safely.
-    pub fn query(self: *Statement, allocator: Allocator) (Allocator.Error || Error)!Rows {
-        return self.all(allocator);
-    }
-
-    /// Resets the statement, applies `params`, and returns every row as owned data.
-    pub fn queryWith(self: *Statement, allocator: Allocator, params: BindParams) (Allocator.Error || Error)!Rows {
-        return self.allWith(allocator, params);
-    }
-
-    /// Returns every row from the current statement as owned data.
-    ///
-    /// The statement continues from its current execution state, uses its
-    /// current bindings, and is reset before returning so it can be reused
-    /// safely.
     pub fn all(self: *Statement, allocator: Allocator) (Allocator.Error || Error)!Rows {
         defer self.reset() catch {};
         return self.allCurrent(allocator);

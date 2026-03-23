@@ -156,7 +156,7 @@ test "connection executeBatch drains row-producing statements and continues" {
     });
 }
 
-test "connection run get query and pragma provide convenience helpers" {
+test "connection run get all and pragma provide convenience helpers" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
@@ -179,7 +179,7 @@ test "connection run get query and pragma provide convenience helpers" {
 
     try std.testing.expect((try fixture.conn.get(std.testing.allocator, "SELECT id FROM users WHERE 0")) == null);
 
-    var rows = try fixture.conn.query(std.testing.allocator, "SELECT id, name FROM users ORDER BY id");
+    var rows = try fixture.conn.all(std.testing.allocator, "SELECT id, name FROM users ORDER BY id");
     defer rows.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 2), rows.len());
     try std.testing.expect(switch ((try (try rows.row(1)).valueByName("id")).*) {
@@ -258,7 +258,7 @@ test "connection runWith getWith and allWith bind parameters" {
     try std.testing.expectEqual(@as(usize, 2), rows.len());
 }
 
-test "connection executeWith and queryWith bind parameters" {
+test "connection executeWith and allWith bind parameters" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
@@ -289,7 +289,7 @@ test "connection executeWith and queryWith bind parameters" {
         else => false,
     });
 
-    var rows = try fixture.conn.queryWith(std.testing.allocator, "SELECT id, name FROM users WHERE age >= ?1 ORDER BY id", .{
+    var rows = try fixture.conn.allWith(std.testing.allocator, "SELECT id, name FROM users WHERE age >= ?1 ORDER BY id", .{
         .positional = &.{.{ .integer = 30 }},
     });
     defer rows.deinit(std.testing.allocator);
