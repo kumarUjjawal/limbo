@@ -35,7 +35,7 @@ pub const ErrorDetails = struct {
     code: Error,
     /// Native status code returned by the shared SDK, when available.
     status_code: ?i32,
-    /// Native error message copied from the shared SDK, when available.
+    /// Stored error message, native or synthetic, when available.
     message: ?[]const u8,
 };
 
@@ -57,7 +57,7 @@ pub fn lastErrorDetails() ?ErrorDetails {
     };
 }
 
-/// Returns a copied native error message for the most recent failure, if any.
+/// Returns a copied stored error message for the most recent failure, if any.
 pub fn lastErrorMessageAlloc(allocator: Allocator) Allocator.Error!?[]u8 {
     const details = lastErrorDetails() orelse return null;
     const message = details.message orelse return null;

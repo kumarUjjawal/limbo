@@ -5,7 +5,8 @@ const IoItem = @import("io_item.zig").IoItem;
 /// Callback used to process HTTP requests taken from the sync IO queue.
 ///
 /// File-backed full-read and full-write requests are handled internally by the
-/// Zig binding. HTTP requests require an explicit handler.
+/// Zig binding. Low-level manual IO flows need either an explicit handler or
+/// an installed owned transport for HTTP requests.
 pub const HttpHandler = struct {
     context: ?*anyopaque = null,
     handle: *const fn (context: ?*anyopaque, item: *IoItem) Error!void,

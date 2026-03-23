@@ -1,12 +1,18 @@
 # Zig Examples
 
+Run these commands from `bindings/zig`.
+
+With a prebuilt SDK prefix:
+
 ```bash
-zig build examples
-zig build example-memory
-zig build example-file
-zig build example-prepared
-zig build example-values
+zig build examples -Dturso-sdk-prefix=/path/to/turso-sdk
+zig build example-memory -Dturso-sdk-prefix=/path/to/turso-sdk
+zig build example-file -Dturso-sdk-prefix=/path/to/turso-sdk
+zig build example-prepared -Dturso-sdk-prefix=/path/to/turso-sdk
+zig build example-values -Dturso-sdk-prefix=/path/to/turso-sdk
 ```
+
+For in-repository development, replace `-Dturso-sdk-prefix=/path/to/turso-sdk` with `-Dturso-sdk-use-cargo=true`.
 
 ## Examples
 

@@ -1,8 +1,8 @@
 //! Internal statement I/O hooks shared by the Zig binding.
 //!
-//! Local statements do not attach an I/O driver because they run with blocking
-//! I/O. Sync statements will attach one so `TURSO_IO` can be resumed without
-//! changing the SQL surface.
+//! Connections opened directly from `Database` do not attach an I/O driver
+//! because they run with blocking I/O. Sync connections attach one so
+//! `TURSO_IO` can be resumed without changing the SQL surface.
 const std = @import("std");
 const c = @import("../c.zig").bindings;
 const Error = @import("error.zig").Error;

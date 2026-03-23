@@ -1,7 +1,7 @@
 //! Opaque change-set handle for the Zig sync binding.
 const c = @import("c.zig").bindings;
 
-/// Opaque changes returned by `waitChanges`.
+/// Opaque changes extracted from a completed `waitChangesOperation`.
 pub const Changes = struct {
     handle: ?*const c.turso_sync_changes_t,
 

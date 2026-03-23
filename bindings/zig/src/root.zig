@@ -48,18 +48,21 @@
 //! ```
 //!
 //! Transactions are available through `Connection.transaction` and
-//! `Connection.transactionWithBehavior`.
+//! `Connection.transactionWithBehavior`. Dropping an unfinished transaction
+//! records its configured cleanup action on the parent connection; the next
+//! connection-level execution helper applies it.
 //!
 //! Core execution helpers are available through `Connection.execute`,
 //! `Connection.executeWith`, and the matching `Transaction` and `Statement`
-//! methods. Convenience helpers remain available through `run`, `get`, `all`,
-//! `pragma`, `pragmaQuery`, and `pragmaUpdate`, with matching `With` variants
-//! for parameterized calls where applicable. `all` eagerly collects the full
-//! result set into owned Zig memory.
+//! methods. Convenience helpers remain available through `queryRow`, `get`,
+//! `all`, `run`, `pragma`, `pragmaQuery`, and `pragmaUpdate`, with matching
+//! `With` variants for parameterized calls where applicable. `all` eagerly
+//! collects the full result set into owned Zig memory.
 //!
 //! When a call fails, `lastErrorDetails` and `lastErrorMessageAlloc` expose
-//! the native status and message captured for the most recent failure on the
-//! current thread.
+//! the optional native status code and stored message captured for the most
+//! recent failure on the current thread. That message may be native or
+//! synthetic, depending on the failing path.
 //!
 //! Global logging can be configured before opening any database:
 //!
@@ -140,7 +143,7 @@ pub const sync = @import("sync/root.zig");
 pub const Transaction = @import("local/transaction.zig").Transaction;
 /// Transaction begin mode.
 pub const TransactionBehavior = @import("local/transaction.zig").Behavior;
-/// Cleanup behavior used when a transaction is dropped unfinished.
+/// Cleanup behavior recorded when a transaction is dropped unfinished.
 pub const TransactionDropBehavior = @import("local/transaction.zig").DropBehavior;
 /// A single owned query result row.
 pub const Row = @import("common/row.zig").Row;
@@ -168,7 +171,7 @@ pub fn lastErrorDetails() ?ErrorDetails {
     return error_api.lastErrorDetails();
 }
 
-/// Returns a copied native error message for the most recent failure, if any.
+/// Returns a copied stored error message for the most recent failure, if any.
 pub fn lastErrorMessageAlloc(allocator: std.mem.Allocator) std.mem.Allocator.Error!?[]u8 {
     return error_api.lastErrorMessageAlloc(allocator);
 }

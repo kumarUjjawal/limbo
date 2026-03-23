@@ -85,7 +85,7 @@ pub const DatabaseOptions = struct {
     auth_token: ?[]const u8 = null,
     /// Client name prefix used by the sync engine.
     client_name: []const u8 = default_client_name,
-    /// Optional long-poll timeout for `waitChanges`.
+    /// Optional long-poll timeout for `waitChangesOperation` and high-level `pull`.
     long_poll_timeout_ms: ?u32 = null,
     /// Whether a fresh database should bootstrap immediately when metadata is missing.
     bootstrap_if_empty: bool = true,

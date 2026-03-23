@@ -12,7 +12,7 @@ The next evolution of SQLite: A high-performance, SQLite-compatible database lib
 - **Prepared Statements**: Reuse statements with positional, named, and numbered parameter binding
 - **One-Shot Query Helpers**: Use `queryRow`, `get`, and `all` with matching `With` variants for parameterized calls
 - **Batch and Introspection Helpers**: Use `executeBatch`, `prepareFirst`, `busyTimeoutMs`, `isAutocommit`, `lastInsertRowId`, `parameterCount`, `namedPosition`, and `columnDeclTypeAlloc`
-- **Transactions**: Deferred, immediate, and exclusive transactions with explicit commit and rollback
+- **Transactions**: Deferred, immediate, and exclusive transactions with explicit commit and rollback helpers
 - **Owned Results**: Rows, text values, and blob values can be copied into Zig-owned memory
 - **Embedded Replica Sync**: Sync with Turso Cloud using `turso.sync.Database`
 - **Low-Level Sync Control**: Drive raw sync operations and IO items through `turso.sync.LowLevelDatabase`
@@ -80,7 +80,7 @@ zig build -Dturso-sdk-use-cargo=true -Dturso-sdk-repo-root=/path/to/limbo
 ### Requirements
 
 - Zig 0.15.2 or newer
-- native host build
+- native host build only
 - Rust toolchain available in `PATH` when using the repository development path
 
 Build and check the package from the binding directory:
@@ -120,7 +120,7 @@ cd bindings/zig
 zig build test -Dturso-sdk-prefix=/path/to/turso-sdk
 ```
 
-For now, the Zig binding supports native host builds only. Cross-target `zig build -Dtarget=...` is rejected until matching shared SDK artifacts are produced for the requested Zig target.
+For now, the Zig binding supports native host builds only. Cross-target `zig build -Dtarget=...` is rejected unconditionally by `build.zig` today; matching SDK artifacts are necessary but not sufficient until cross-target packaging support is implemented.
 
 ## Quick Start
 
@@ -273,7 +273,9 @@ defer stmt.deinit();
 try stmt.bindInt(1, 1);
 ```
 
-Connections also expose `executeBatch`, `busyTimeoutMs`, `isAutocommit`, `lastInsertRowId`, `transaction`, `transactionWithBehavior`, and `pragma`.
+Connection helpers also include `executeBatch`, `prepareFirst`, `busyTimeoutMs`, `isAutocommit`, `lastInsertRowId`, `transaction`, `transactionWithBehavior`, `pragma`, `queryRow`, `get`, and `all`.
+
+Dropped unfinished transactions do not run cleanup eagerly in `deinit`. Instead, the binding records the configured drop behavior and applies it before the next connection-level execution helper runs.
 
 ### Statement
 
@@ -304,7 +306,7 @@ while (try query_stmt.step() == .row) {
 }
 ```
 
-Prepared statements also expose `queryRowWith`, `getWith`, `allWith`, `parameterCount`, `namedPosition`, `columnCount`, `columnNameAlloc`, and `columnDeclTypeAlloc`.
+Prepared statements also include helpers such as `queryRow`, `queryRowWith`, `get`, `getWith`, `all`, `allWith`, `parameterCount`, `namedPosition`, `columnCount`, `columnNameAlloc`, `columnNamesAlloc`, `columnIndex`, `columnDeclTypeAlloc`, and `columnsAlloc`.
 
 ### Working with Results
 
@@ -334,12 +336,13 @@ const first_name = try first.valueByName("name");
 _ = first_name;
 ```
 
-`get` returns `null` when there is no row. `queryRow` returns `error.QueryReturnedNoRows`. `query` is a matching alias for `all`. Text and blob values are copied into owned Zig memory, so `Row`, `Rows`, and owned `Value` buffers must be cleaned up with `deinit`.
+`get` returns `null` when there is no row. `queryRow` returns `error.QueryReturnedNoRows`. `all` eagerly copies the full result set into owned Zig memory. Text and blob values are copied into owned Zig memory, so `Row`, `Rows`, and owned `Value` buffers must be cleaned up with `deinit`.
 
 When a call fails, `turso.lastErrorDetails()` returns the captured error tag,
-native status code, and native message for the most recent failure on the
-current thread. Use `turso.lastErrorMessageAlloc(allocator)` when you need to
-keep a copy of the message after the next failing call.
+optional native status code, and the stored message for the most recent failure
+on the current thread. That message may come from the shared SDK or from a
+binding-generated synthetic error. Use `turso.lastErrorMessageAlloc(allocator)`
+when you need to keep a copy of the message after the next failing call.
 
 ### Sync API Reference
 
@@ -388,18 +391,28 @@ var raw = try turso.sync.LowLevelDatabase.init("local.db", .{
 });
 defer raw.deinit();
 
-var operation = try raw.connectOperation();
-defer operation.deinit();
+var create_operation = try raw.createOperation();
+defer create_operation.deinit();
 
 while (true) {
-    switch (try operation.@"resume"()) {
+    switch (try create_operation.@"resume"()) {
+        .io => try raw.driveIo(),
+        .done => break,
+    }
+}
+
+var connect_operation = try raw.connectOperation();
+defer connect_operation.deinit();
+
+while (true) {
+    switch (try connect_operation.@"resume"()) {
         .io => try raw.driveIo(),
         .done => break,
     }
 }
 ```
 
-Use `takeIoItem` and `stepIoCallbacks` when you need to process the sync IO queue yourself.
+Use `openOperation` instead of `createOperation` when reopening an existing replica. Use `takeIoItem` and `stepIoCallbacks` when you need to process the sync IO queue yourself.
 
 ## Not Yet Supported
 

@@ -188,7 +188,8 @@ pub const Database = struct {
         state.installOwnedTransport(transport);
     }
 
-    /// Sets the optional HTTP handler used by `driveIo`.
+    /// Sets the optional HTTP handler used by low-level `driveIo` when no
+    /// owned transport is installed.
     pub fn setHttpHandler(self: *Database, handler: ?HttpHandler) void {
         const state = self.state orelse return;
         state.setHttpHandler(handler);
@@ -259,7 +260,7 @@ pub const Database = struct {
     /// Processes all currently queued sync IO items.
     ///
     /// File-based full-read and full-write requests are handled internally.
-    /// HTTP requests require `setHttpHandler`.
+    /// HTTP requests require `setHttpHandler` or `installOwnedTransport`.
     pub fn driveIo(self: *Database) Error!void {
         const state = self.state orelse return errors.fail(error.Misuse);
         return state.driveIo();

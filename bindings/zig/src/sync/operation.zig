@@ -1,4 +1,4 @@
-//! Sync async operation wrappers for the Zig binding.
+//! Resumable sync operation wrappers for the Zig binding.
 const std = @import("std");
 const base_c = @import("../c.zig").bindings;
 const c = @import("c.zig").bindings;
@@ -26,7 +26,7 @@ pub const ResultKind = enum {
     stats,
 };
 
-/// Async operation returned by the sync engine.
+/// Resumable operation returned by the sync engine.
 pub const Operation = struct {
     handle: ?*const c.turso_sync_operation_t,
 
