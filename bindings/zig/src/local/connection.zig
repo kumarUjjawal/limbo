@@ -125,6 +125,7 @@ pub const Connection = struct {
 
     /// Returns the first row from `sql` as an owned `Row`.
     pub fn queryRow(self: *Connection, allocator: Allocator, sql: []const u8) (Allocator.Error || Error)!Row {
+        try self.resolvePendingTransaction();
         var stmt = try self.prepare(sql);
         defer stmt.deinit();
         return stmt.queryRow(allocator);
@@ -137,6 +138,7 @@ pub const Connection = struct {
         sql: []const u8,
         params: BindParams,
     ) (Allocator.Error || Error)!Row {
+        try self.resolvePendingTransaction();
         var stmt = try self.prepare(sql);
         defer stmt.deinit();
         return stmt.queryRowWith(allocator, params);
@@ -144,6 +146,7 @@ pub const Connection = struct {
 
     /// Returns the first row from `sql`, if any.
     pub fn get(self: *Connection, allocator: Allocator, sql: []const u8) (Allocator.Error || Error)!?Row {
+        try self.resolvePendingTransaction();
         var stmt = try self.prepare(sql);
         defer stmt.deinit();
         return stmt.get(allocator);
@@ -156,6 +159,7 @@ pub const Connection = struct {
         sql: []const u8,
         params: BindParams,
     ) (Allocator.Error || Error)!?Row {
+        try self.resolvePendingTransaction();
         var stmt = try self.prepare(sql);
         defer stmt.deinit();
         return stmt.getWith(allocator, params);
@@ -163,6 +167,7 @@ pub const Connection = struct {
 
     /// Returns every row from `sql` as owned data.
     pub fn all(self: *Connection, allocator: Allocator, sql: []const u8) (Allocator.Error || Error)!Rows {
+        try self.resolvePendingTransaction();
         var stmt = try self.prepare(sql);
         defer stmt.deinit();
         return stmt.all(allocator);
@@ -175,6 +180,7 @@ pub const Connection = struct {
         sql: []const u8,
         params: BindParams,
     ) (Allocator.Error || Error)!Rows {
+        try self.resolvePendingTransaction();
         var stmt = try self.prepare(sql);
         defer stmt.deinit();
         return stmt.allWith(allocator, params);
@@ -186,7 +192,6 @@ pub const Connection = struct {
         allocator: Allocator,
         name: []const u8,
     ) (Allocator.Error || Error)!Rows {
-        try self.resolvePendingTransaction();
         const pragma_sql = try std.fmt.allocPrint(std.heap.c_allocator, "PRAGMA {s}", .{name});
         defer std.heap.c_allocator.free(pragma_sql);
         return self.all(allocator, pragma_sql);
@@ -201,7 +206,6 @@ pub const Connection = struct {
         name: []const u8,
         value_sql: []const u8,
     ) (Allocator.Error || Error)!Rows {
-        try self.resolvePendingTransaction();
         const pragma_sql = try std.fmt.allocPrint(
             std.heap.c_allocator,
             "PRAGMA {s} = {s}",
@@ -218,7 +222,8 @@ pub const Connection = struct {
 
     /// Begins a new deferred transaction on this connection.
     ///
-    /// Unfinished transactions default to rollback in `Transaction.deinit`.
+    /// Unfinished transactions default to rollback on the next connection-level
+    /// execution after `Transaction.deinit`.
     pub fn transaction(self: *Connection) (Allocator.Error || Error)!Transaction {
         return self.transactionWithBehavior(.deferred);
     }
@@ -228,7 +233,6 @@ pub const Connection = struct {
         self: *Connection,
         behavior: TransactionBehavior,
     ) (Allocator.Error || Error)!Transaction {
-        try self.resolvePendingTransaction();
         _ = try self.execute(behavior.beginSql());
         return .{
             .connection_handle = &self.handle,
@@ -241,9 +245,9 @@ pub const Connection = struct {
     /// Prepares a single SQL statement for later execution.
     ///
     /// The returned statement is an exclusive-use handle and must be cleaned up
-    /// with `Statement.deinit`.
+    /// with `Statement.deinit`. Preparing does not apply cleanup requested by a
+    /// dropped transaction.
     pub fn prepare(self: *Connection, sql: []const u8) (Allocator.Error || Error)!Statement {
-        try self.resolvePendingTransaction();
         const handle = self.handle orelse return errors.fail(error.Misuse);
         const sql_z = try std.heap.c_allocator.dupeZ(u8, sql);
         defer std.heap.c_allocator.free(sql_z);
@@ -265,9 +269,9 @@ pub const Connection = struct {
     /// Prepares the first SQL statement from `sql`.
     ///
     /// Returns `null` when no statement is found, such as when the input only
-    /// contains whitespace.
+    /// contains whitespace. Preparing does not apply cleanup requested by a
+    /// dropped transaction.
     pub fn prepareFirst(self: *Connection, sql: []const u8) (Allocator.Error || Error)!?PrepareFirstResult {
-        try self.resolvePendingTransaction();
         const handle = self.handle orelse return errors.fail(error.Misuse);
         const sql_z = try std.heap.c_allocator.dupeZ(u8, sql);
         defer std.heap.c_allocator.free(sql_z);

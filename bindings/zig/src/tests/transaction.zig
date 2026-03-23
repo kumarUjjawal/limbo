@@ -48,7 +48,7 @@ test "transaction prepare and rollback discard changes" {
     try expectCount(&fixture.conn, 0);
 }
 
-test "transaction deinit rolls back unfinished work" {
+test "transaction deinit defers rollback until connection helpers run" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
@@ -62,11 +62,15 @@ test "transaction deinit rolls back unfinished work" {
         try std.testing.expect(!(try fixture.conn.isAutocommit()));
     }
 
+    try std.testing.expect(!(try fixture.conn.isAutocommit()));
+    try expectCount(&fixture.conn, 1);
+    try std.testing.expect(!(try fixture.conn.isAutocommit()));
+
+    try expectQueryCount(&fixture.conn, 0);
     try std.testing.expect(try fixture.conn.isAutocommit());
-    try expectCount(&fixture.conn, 0);
 }
 
-test "transaction deinit can commit unfinished work" {
+test "transaction deinit defers commit until connection helpers run" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
@@ -80,8 +84,49 @@ test "transaction deinit can commit unfinished work" {
         tx.setDropBehavior(.commit);
     }
 
-    try std.testing.expect(try fixture.conn.isAutocommit());
+    try std.testing.expect(!(try fixture.conn.isAutocommit()));
     try expectCount(&fixture.conn, 1);
+    try std.testing.expect(!(try fixture.conn.isAutocommit()));
+
+    try expectQueryCount(&fixture.conn, 1);
+    try std.testing.expect(try fixture.conn.isAutocommit());
+}
+
+test "connection prepareFirst does not resolve dropped rollback" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.execute("CREATE TABLE t (x INTEGER)");
+
+    {
+        var tx = try fixture.conn.transaction();
+        defer tx.deinit();
+
+        _ = try tx.execute("INSERT INTO t VALUES (1)");
+    }
+
+    try std.testing.expect(!(try fixture.conn.isAutocommit()));
+
+    {
+        var prepared = (try fixture.conn.prepareFirst("SELECT COUNT(*) FROM t")).?;
+        defer prepared.statement.deinit();
+
+        try std.testing.expect(prepared.tail_index > 0);
+        try std.testing.expectEqual(turso.StepResult.row, try prepared.statement.step());
+
+        var count = try prepared.statement.readValueAlloc(std.testing.allocator, 0);
+        defer count.deinit(std.testing.allocator);
+
+        try std.testing.expect(switch (count) {
+            .integer => |v| v == 1,
+            else => false,
+        });
+        try std.testing.expectEqual(turso.StepResult.done, try prepared.statement.step());
+        try std.testing.expect(!(try fixture.conn.isAutocommit()));
+    }
+
+    try expectQueryCount(&fixture.conn, 0);
+    try std.testing.expect(try fixture.conn.isAutocommit());
 }
 
 test "transaction deinit can ignore unfinished work" {
@@ -395,4 +440,14 @@ fn expectCount(conn: *turso.Connection, expected: i64) !void {
         else => false,
     });
     try std.testing.expectEqual(turso.StepResult.done, try stmt.step());
+}
+
+fn expectQueryCount(conn: *turso.Connection, expected: i64) !void {
+    var row = try conn.queryRow(std.testing.allocator, "SELECT COUNT(*) FROM t");
+    defer row.deinit(std.testing.allocator);
+
+    try std.testing.expect(switch ((try row.value(0)).*) {
+        .integer => |v| v == expected,
+        else => false,
+    });
 }

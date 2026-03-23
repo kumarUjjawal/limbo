@@ -1,10 +1,10 @@
 //! Transaction support for the Zig binding.
 //!
 //! Transactions borrow a connection handle and expose the same local, blocking
-//! execution model as `Connection`. Unfinished transactions apply their
-//! configured drop behavior in `deinit`; when rollback or commit cannot
-//! complete immediately, the parent connection retries it on the next SQL
-//! operation.
+//! execution model as `Connection`. Dropping an unfinished transaction records
+//! its configured cleanup action on the parent connection. The parent
+//! connection applies pending rollback or commit before the next connection-
+//! level execution helper runs.
 const std = @import("std");
 const c = @import("../c.zig").bindings;
 const errors = @import("../common/error.zig");
@@ -65,9 +65,9 @@ pub const Transaction = struct {
 
     /// Cleans up the transaction.
     ///
-    /// If the transaction is still open, this applies the configured drop
-    /// behavior immediately. When cleanup cannot complete during `deinit`, the
-    /// parent connection retries it before the next SQL operation.
+    /// If the transaction is still open, this records the configured drop
+    /// behavior for the parent connection. Pending cleanup is applied before
+    /// the next connection-level execution helper runs.
     pub fn deinit(self: *Transaction) void {
         defer self.io_owner.deinit();
         if (!self.open) {
@@ -85,23 +85,9 @@ pub const Transaction = struct {
         }
 
         switch (self.drop_behavior) {
-            .rollback => {
-                _ = execOnHandle(handle, self.io_driver, "ROLLBACK") catch {
-                    self.pending_action.* = .rollback;
-                    return;
-                };
-                self.pending_action.* = .none;
-            },
-            .commit => {
-                _ = execOnHandle(handle, self.io_driver, "COMMIT") catch {
-                    self.pending_action.* = .commit;
-                    return;
-                };
-                self.pending_action.* = .none;
-            },
-            .ignore => {
-                self.pending_action.* = .none;
-            },
+            .rollback => self.pending_action.* = .rollback,
+            .commit => self.pending_action.* = .commit,
+            .ignore => self.pending_action.* = .none,
             .panic => @panic("transaction dropped without being finished"),
         }
     }
@@ -279,7 +265,7 @@ pub const Transaction = struct {
         self.drop_behavior = drop_behavior;
     }
 
-    /// Applies the current drop behavior immediately.
+    /// Applies the current drop behavior explicitly and surfaces cleanup errors.
     pub fn finish(self: *Transaction) (Allocator.Error || Error)!void {
         if (!self.open) {
             return;
