@@ -35,7 +35,6 @@ pub const BindParams = bind_params.BindParams;
 /// A prepared SQL statement.
 pub const Statement = struct {
     handle: ?*c.turso_statement_t,
-    connection_handle_slot: ?*?*c.turso_connection_t = null,
     io_driver: ?IoDriver = null,
     io_owner: IoOwner = .{},
 
@@ -510,11 +509,11 @@ pub const Statement = struct {
     }
 
     fn runCurrent(self: *Statement) Error!RunResult {
-        const connection_handle = try self.currentConnectionHandle();
+        const handle = self.handle orelse return errors.fail(error.Misuse);
         const changes = try self.execute();
         return .{
             .changes = changes,
-            .last_insert_rowid = c.turso_connection_last_insert_rowid(connection_handle),
+            .last_insert_rowid = c.turso_statement_last_insert_rowid(handle),
         };
     }
 
@@ -597,11 +596,6 @@ pub const Statement = struct {
             .metadata = metadata,
             .items = try rows.toOwnedSlice(allocator),
         };
-    }
-
-    fn currentConnectionHandle(self: *Statement) Error!*c.turso_connection_t {
-        const connection_handle_slot = self.connection_handle_slot orelse return errors.fail(error.Misuse);
-        return connection_handle_slot.* orelse return errors.fail(error.Misuse);
     }
 
     fn hasCurrentRow(self: *Statement) Error!bool {

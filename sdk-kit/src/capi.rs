@@ -306,6 +306,16 @@ pub extern "C" fn turso_statement_n_change(statement: *const c::turso_statement_
 
 #[no_mangle]
 #[signature(c)]
+pub extern "C" fn turso_statement_last_insert_rowid(statement: *const c::turso_statement_t) -> i64 {
+    let statement = match unsafe { TursoStatement::ref_from_capi(statement) } {
+        Ok(statement) => statement,
+        Err(_) => return 0,
+    };
+    statement.last_insert_rowid()
+}
+
+#[no_mangle]
+#[signature(c)]
 pub extern "C" fn turso_statement_column_name(
     statement: *const c::turso_statement_t,
     index: usize,
@@ -645,10 +655,10 @@ mod tests {
             turso_statement_bind_positional_blob, turso_statement_bind_positional_double,
             turso_statement_bind_positional_int, turso_statement_bind_positional_null,
             turso_statement_bind_positional_text, turso_statement_column_count,
-            turso_statement_deinit, turso_statement_execute, turso_statement_n_change,
-            turso_statement_named_position, turso_statement_parameters_count,
-            turso_statement_run_io, turso_statement_step, turso_status_code_t, turso_str_deinit,
-            turso_version,
+            turso_statement_deinit, turso_statement_execute, turso_statement_last_insert_rowid,
+            turso_statement_n_change, turso_statement_named_position,
+            turso_statement_parameters_count, turso_statement_run_io, turso_statement_step,
+            turso_status_code_t, turso_str_deinit, turso_version,
         },
         value_from_c_value,
     };
@@ -779,6 +789,67 @@ mod tests {
 
             turso_statement_deinit(statement);
             turso_connection_deinit(connection);
+            turso_database_deinit(db);
+        }
+    }
+
+    #[test]
+    pub fn test_statement_last_insert_rowid_survives_connection_deinit() {
+        unsafe {
+            let path = CString::new(":memory:").unwrap();
+            let config = c::turso_database_config_t {
+                path: path.as_ptr(),
+                ..Default::default()
+            };
+            let mut db = std::ptr::null();
+            let status = turso_database_new(&config, &mut db, std::ptr::null_mut());
+            assert_eq!(status, turso_status_code_t::TURSO_OK);
+
+            let status = turso_database_open(db, std::ptr::null_mut());
+            assert_eq!(status, turso_status_code_t::TURSO_OK);
+
+            let mut connection = std::ptr::null_mut();
+            let status = turso_database_connect(db, &mut connection, std::ptr::null_mut());
+            assert_eq!(status, turso_status_code_t::TURSO_OK);
+
+            let mut create_statement = std::ptr::null_mut();
+            let status = turso_connection_prepare_single(
+                connection,
+                c"CREATE TABLE t(id INTEGER PRIMARY KEY, x INTEGER)".as_ptr(),
+                &mut create_statement,
+                std::ptr::null_mut(),
+            );
+            assert_eq!(status, turso_status_code_t::TURSO_OK);
+            assert_eq!(
+                turso_statement_execute(
+                    create_statement,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                ),
+                turso_status_code_t::TURSO_DONE,
+            );
+            turso_statement_deinit(create_statement);
+
+            let mut insert_statement = std::ptr::null_mut();
+            let status = turso_connection_prepare_single(
+                connection,
+                c"INSERT INTO t(x) VALUES (1)".as_ptr(),
+                &mut insert_statement,
+                std::ptr::null_mut(),
+            );
+            assert_eq!(status, turso_status_code_t::TURSO_OK);
+
+            turso_connection_deinit(connection);
+
+            let mut rows_changed = 0;
+            assert_eq!(
+                turso_statement_execute(insert_statement, &mut rows_changed, std::ptr::null_mut(),),
+                turso_status_code_t::TURSO_DONE,
+            );
+            assert_eq!(rows_changed, 1);
+            assert_eq!(turso_statement_last_insert_rowid(insert_statement), 1);
+
+            turso_statement_deinit(insert_statement);
             turso_database_deinit(db);
         }
     }

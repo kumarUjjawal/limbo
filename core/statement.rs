@@ -116,6 +116,10 @@ impl Statement {
             .load(crate::sync::atomic::Ordering::SeqCst)
     }
 
+    pub fn last_insert_rowid(&self) -> i64 {
+        self.program.connection.last_insert_rowid()
+    }
+
     pub fn set_mv_tx(&mut self, mv_tx: Option<(u64, TransactionMode)>) {
         self.program.connection.set_mv_tx(mv_tx);
     }

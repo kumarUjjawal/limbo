@@ -945,6 +945,10 @@ impl TursoStatement {
     pub fn n_change(&self) -> i64 {
         self.statement.n_change()
     }
+    /// returns last insert rowid visible to the statement's connection
+    pub fn last_insert_rowid(&self) -> i64 {
+        self.statement.last_insert_rowid()
+    }
     /// returns parameters count for the statement
     pub fn parameters_count(&self) -> usize {
         self.statement.parameters_count()

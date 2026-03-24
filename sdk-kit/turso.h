@@ -235,6 +235,9 @@ turso_status_code_t turso_statement_finalize(const turso_statement_t *self, cons
 /** return amount of row modifications (insert/delete operations) made by the most recent executed statement */
 int64_t turso_statement_n_change(const turso_statement_t *self);
 
+/** Get last insert rowid for the statement's connection or 0 if no inserts happened before */
+int64_t turso_statement_last_insert_rowid(const turso_statement_t *self);
+
 /** Get column count */
 int64_t turso_statement_column_count(const turso_statement_t *self);
 

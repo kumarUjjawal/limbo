@@ -321,7 +321,7 @@ test "statement typed read helpers reject mismatched types" {
     try std.testing.expectError(error.Misuse, stmt.readIntByName("txt"));
 }
 
-test "statement run rejects closed parent connection" {
+test "statement run survives closed parent connection" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
 
@@ -333,7 +333,9 @@ test "statement run rejects closed parent connection" {
     try stmt.bindText(1, "alice");
     fixture.conn.deinit();
 
-    try std.testing.expectError(error.Misuse, stmt.run());
+    const result = try stmt.run();
+    try std.testing.expectEqual(@as(u64, 1), result.changes);
+    try std.testing.expectEqual(@as(i64, 1), result.last_insert_rowid);
 }
 
 fn freeNameList(allocator: std.mem.Allocator, names: [][]u8) void {

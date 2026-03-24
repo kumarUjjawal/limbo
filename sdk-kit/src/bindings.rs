@@ -248,6 +248,10 @@ unsafe extern "C" {
     pub fn turso_statement_n_change(self_: *const turso_statement_t) -> i64;
 }
 unsafe extern "C" {
+    #[doc = " Get last insert rowid for the statement's connection or 0 if no inserts happened before"]
+    pub fn turso_statement_last_insert_rowid(self_: *const turso_statement_t) -> i64;
+}
+unsafe extern "C" {
     #[doc = " Get column count"]
     pub fn turso_statement_column_count(self_: *const turso_statement_t) -> i64;
 }
