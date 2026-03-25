@@ -321,6 +321,27 @@ test "statement typed read helpers reject mismatched types" {
     try std.testing.expectError(error.Misuse, stmt.readIntByName("txt"));
 }
 
+test "statement read helpers reject access outside the current row" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.execute("CREATE TABLE t (id INTEGER)");
+    _ = try fixture.conn.execute("INSERT INTO t VALUES (7)");
+
+    var stmt = try fixture.conn.prepare("SELECT id FROM t");
+    defer stmt.deinit();
+
+    try std.testing.expectError(error.Misuse, stmt.readInt(0));
+    try std.testing.expectError(error.Misuse, stmt.readValueAlloc(std.testing.allocator, 0));
+
+    try std.testing.expectEqual(turso.StepResult.row, try stmt.step());
+    try std.testing.expectEqual(@as(i64, 7), try stmt.readInt(0));
+
+    try std.testing.expectEqual(turso.StepResult.done, try stmt.step());
+    try std.testing.expectError(error.Misuse, stmt.readInt(0));
+    try std.testing.expectError(error.Misuse, stmt.readValueAlloc(std.testing.allocator, 0));
+}
+
 test "statement run survives closed parent connection" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
@@ -638,4 +659,39 @@ test "statement executeWith and allWith complete parameterized one-shot APIs" {
     try std.testing.expectError(error.QueryReturnedNoRows, query.queryRowWith(std.testing.allocator, .{
         .positional = &.{.{ .integer = 99 }},
     }));
+}
+
+test "statement parameterized helpers reset after bind and no-row failures" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)");
+    _ = try fixture.conn.execute("INSERT INTO users (name) VALUES ('alice')");
+
+    var insert = try fixture.conn.prepare("INSERT INTO users (name) VALUES (:name)");
+    defer insert.deinit();
+
+    try std.testing.expectError(error.Misuse, insert.executeWith(.{
+        .named = &.{.{ .name = ":missing", .value = .{ .text = "bob" } }},
+    }));
+    try std.testing.expectEqual(@as(u64, 1), try insert.executeWith(.{
+        .named = &.{.{ .name = ":name", .value = .{ .text = "bob" } }},
+    }));
+
+    var query = try fixture.conn.prepare("SELECT id, name FROM users WHERE name = :name");
+    defer query.deinit();
+
+    try std.testing.expectError(error.QueryReturnedNoRows, query.queryRowWith(std.testing.allocator, .{
+        .named = &.{.{ .name = ":name", .value = .{ .text = "missing" } }},
+    }));
+
+    var row = try query.queryRowWith(std.testing.allocator, .{
+        .named = &.{.{ .name = ":name", .value = .{ .text = "alice" } }},
+    });
+    defer row.deinit(std.testing.allocator);
+
+    try std.testing.expect(switch ((try row.valueByName("id")).*) {
+        .integer => |value| value == 1,
+        else => false,
+    });
 }

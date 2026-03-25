@@ -426,6 +426,32 @@ test "transaction executeWith and allWith bind parameters" {
     try tx.rollback();
 }
 
+test "transaction executeBatch stops on error and keeps prior changes pending" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.execute("CREATE TABLE t (x INTEGER)");
+
+    var tx = try fixture.conn.transaction();
+    defer tx.deinit();
+
+    try std.testing.expectError(error.Database, tx.executeBatch(
+        \\INSERT INTO t VALUES (1);
+        \\NOT VALID SQL !@#;
+        \\INSERT INTO t VALUES (2);
+    ));
+
+    try std.testing.expect(!(try fixture.conn.isAutocommit()));
+
+    var row = try tx.queryRow(std.testing.allocator, "SELECT COUNT(*) FROM t");
+    defer row.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(i64, 1), try row.int(0));
+
+    try tx.rollback();
+    try std.testing.expect(try fixture.conn.isAutocommit());
+    try expectQueryCount(&fixture.conn, 0);
+}
+
 fn expectCount(conn: *turso.Connection, expected: i64) !void {
     var stmt = try conn.prepare("SELECT COUNT(*) FROM t");
     defer stmt.deinit();

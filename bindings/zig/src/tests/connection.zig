@@ -156,6 +156,21 @@ test "connection executeBatch drains row-producing statements and continues" {
     });
 }
 
+test "connection executeBatch stops at the first failing statement" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.execute("CREATE TABLE t (x INTEGER)");
+
+    try std.testing.expectError(error.Database, fixture.conn.executeBatch(
+        \\INSERT INTO t VALUES (1);
+        \\NOT VALID SQL !@#;
+        \\INSERT INTO t VALUES (2);
+    ));
+
+    try expectCount(&fixture.conn, 1);
+}
+
 test "connection run get all and pragma provide convenience helpers" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
@@ -294,4 +309,47 @@ test "connection executeWith and allWith bind parameters" {
     });
     defer rows.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(usize, 2), rows.len());
+}
+
+test "connection prepare does not resolve dropped rollback" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.execute("CREATE TABLE t (x INTEGER)");
+
+    {
+        var tx = try fixture.conn.transaction();
+        defer tx.deinit();
+
+        _ = try tx.execute("INSERT INTO t VALUES (1)");
+    }
+
+    try std.testing.expect(!(try fixture.conn.isAutocommit()));
+
+    var stmt = try fixture.conn.prepare("SELECT COUNT(*) FROM t");
+    defer stmt.deinit();
+
+    try std.testing.expectEqual(turso.StepResult.row, try stmt.step());
+    try std.testing.expectEqual(@as(i64, 1), try stmt.readInt(0));
+    try std.testing.expectEqual(turso.StepResult.done, try stmt.step());
+    try std.testing.expect(!(try fixture.conn.isAutocommit()));
+
+    try expectQueryCount(&fixture.conn, 0);
+    try std.testing.expect(try fixture.conn.isAutocommit());
+}
+
+fn expectCount(conn: *turso.Connection, expected: i64) !void {
+    var stmt = try conn.prepare("SELECT COUNT(*) FROM t");
+    defer stmt.deinit();
+
+    try std.testing.expectEqual(turso.StepResult.row, try stmt.step());
+    try std.testing.expectEqual(expected, try stmt.readInt(0));
+    try std.testing.expectEqual(turso.StepResult.done, try stmt.step());
+}
+
+fn expectQueryCount(conn: *turso.Connection, expected: i64) !void {
+    var row = try conn.queryRow(std.testing.allocator, "SELECT COUNT(*) FROM t");
+    defer row.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(expected, try row.int(0));
 }

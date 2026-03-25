@@ -148,6 +148,46 @@ test "sync database open and connect reuse local SQL surface" {
     });
 }
 
+test "sync low-level operations expose result kinds and owned stats" {
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const db_path = try support.tempPathAlloc(std.testing.allocator, &tmp_dir, "result-kinds.db");
+    defer std.testing.allocator.free(db_path);
+
+    var db = try turso.sync.LowLevelDatabase.init(db_path, .{
+        .bootstrap_if_empty = false,
+    });
+    defer db.deinit();
+
+    var create_operation = try db.createOperation();
+    defer create_operation.deinit();
+    try driveOperationWithDatabase(&db, &create_operation);
+    try std.testing.expectEqual(turso.sync.OperationResultKind.none, create_operation.resultKind());
+    try std.testing.expectError(error.Misuse, create_operation.extractChanges());
+    try std.testing.expect((try db.takeIoItem()) == null);
+
+    var open_operation = try db.openOperation();
+    defer open_operation.deinit();
+    try driveOperationWithDatabase(&db, &open_operation);
+    try std.testing.expectEqual(turso.sync.OperationResultKind.none, open_operation.resultKind());
+    try std.testing.expectError(error.Misuse, open_operation.extractChanges());
+
+    var stats_operation = try db.statsOperation();
+    defer stats_operation.deinit();
+    try driveOperationWithDatabase(&db, &stats_operation);
+    try std.testing.expectEqual(turso.sync.OperationResultKind.stats, stats_operation.resultKind());
+
+    var stats = try stats_operation.extractStatsAlloc(std.testing.allocator);
+    defer stats.deinit(std.testing.allocator);
+
+    try std.testing.expect(stats.cdc_operations >= 0);
+    try std.testing.expect(stats.main_wal_size >= 0);
+    try std.testing.expect(stats.revert_wal_size >= 0);
+    try std.testing.expect(stats.network_sent_bytes >= 0);
+    try std.testing.expect(stats.network_received_bytes >= 0);
+}
+
 test "sync database accepts remote encryption key without cipher" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
