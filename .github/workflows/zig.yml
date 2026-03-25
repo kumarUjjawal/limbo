@@ -56,8 +56,8 @@ jobs:
         working-directory: bindings/zig
         run: zig build test -Dturso-sdk-use-cargo=true
 
-      - name: Build SDK archive
-        run: cargo build --locked -p turso_sdk_kit
+      - name: Build sync SDK archive
+        run: cargo build --locked -p turso_sync_sdk_kit
 
       - name: Stage SDK prefix
         run: python bindings/zig/scripts/stage_sdk_prefix.py --repo-root . --out-dir "${{ runner.temp }}/turso-sdk"
