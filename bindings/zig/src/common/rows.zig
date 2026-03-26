@@ -52,7 +52,11 @@ pub const Rows = struct {
                 return index;
             }
         }
-        return misuse();
+
+        var message_buf: [256]u8 = undefined;
+        const message = std.fmt.bufPrint(&message_buf, "column '{s}' not found in result set", .{name}) catch
+            "column not found in result set";
+        return misuseMessage(message);
     }
 
     /// Returns copied column names for the result set.
@@ -83,7 +87,13 @@ pub const Rows = struct {
     /// Returns the row at `index`.
     pub fn row(self: *const Rows, index: usize) error{Misuse}!*const Row {
         if (index >= self.items.len) {
-            return misuse();
+            var message_buf: [128]u8 = undefined;
+            const message = std.fmt.bufPrint(
+                &message_buf,
+                "row index {} out of bounds (result set has {} rows)",
+                .{ index, self.items.len },
+            ) catch "row index out of bounds";
+            return misuseMessage(message);
         }
         return &self.items[index];
     }
@@ -91,12 +101,17 @@ pub const Rows = struct {
 
 fn indexOrError(len: usize, index: usize) error{Misuse}!usize {
     if (index >= len) {
-        return misuse();
+        var message_buf: [128]u8 = undefined;
+        const message = std.fmt.bufPrint(
+            &message_buf,
+            "column index {} out of bounds (result set has {} columns)",
+            .{ index, len },
+        ) catch "column index out of bounds";
+        return misuseMessage(message);
     }
     return index;
 }
 
-fn misuse() error{Misuse} {
-    errors.record(error.Misuse);
-    return error.Misuse;
+fn misuseMessage(message: []const u8) error{Misuse} {
+    return @errorCast(errors.failMessage(error.Misuse, message));
 }

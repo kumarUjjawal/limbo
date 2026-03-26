@@ -10,8 +10,9 @@ const IoOwner = @import("../common/io_driver.zig").IoOwner;
 const Row = @import("../common/row.zig").Row;
 const Rows = @import("../common/rows.zig").Rows;
 const RunResult = @import("../common/run_result.zig").RunResult;
-const BindParams = @import("statement.zig").BindParams;
-const Statement = @import("statement.zig").Statement;
+const statement_api = @import("statement.zig");
+const BindParams = statement_api.BindParams;
+const Statement = statement_api.Statement;
 const transaction = @import("transaction.zig");
 
 const Allocator = std.mem.Allocator;
@@ -51,7 +52,8 @@ pub const Connection = struct {
     /// Executes a single SQL statement to completion.
     ///
     /// For statements that return rows, use `prepare` and `Statement.step`
-    /// instead so rows can be inspected explicitly.
+    /// instead so rows can be inspected explicitly. Row-producing statements
+    /// return `error.Misuse`.
     pub fn execute(self: *Connection, sql: []const u8) (Allocator.Error || Error)!u64 {
         try self.resolvePendingTransaction();
         var stmt = try self.prepare(sql);
@@ -62,7 +64,8 @@ pub const Connection = struct {
     /// Executes a single SQL statement to completion after applying `params`.
     ///
     /// For statements that return rows, use `queryRowWith`, `getWith`, `allWith`,
-    /// or explicit statement stepping instead.
+    /// or explicit statement stepping instead. Row-producing statements return
+    /// `error.Misuse`.
     pub fn executeWith(self: *Connection, sql: []const u8, params: BindParams) (Allocator.Error || Error)!u64 {
         try self.resolvePendingTransaction();
         var stmt = try self.prepare(sql);
@@ -71,6 +74,8 @@ pub const Connection = struct {
     }
 
     /// Executes a single SQL statement and returns result metadata.
+    ///
+    /// Row-producing statements return `error.Misuse`.
     pub fn run(self: *Connection, sql: []const u8) (Allocator.Error || Error)!RunResult {
         try self.resolvePendingTransaction();
         var stmt = try self.prepare(sql);
@@ -79,6 +84,8 @@ pub const Connection = struct {
     }
 
     /// Executes a single SQL statement with `params` and returns result metadata.
+    ///
+    /// Row-producing statements return `error.Misuse`.
     pub fn runWith(self: *Connection, sql: []const u8, params: BindParams) (Allocator.Error || Error)!RunResult {
         try self.resolvePendingTransaction();
         var stmt = try self.prepare(sql);
@@ -97,7 +104,7 @@ pub const Connection = struct {
             var prepared = result;
             defer prepared.statement.deinit();
 
-            _ = try prepared.statement.execute();
+            _ = try statement_api.executeDiscardingRows(&prepared.statement);
 
             remaining = remaining[prepared.tail_index..];
         }
@@ -317,6 +324,7 @@ pub const Connection = struct {
                 _ = try execTransactionControl(handle, self.io_driver, "COMMIT");
                 self.pending_tx_action = .none;
             },
+            .panic => @panic("Transaction dropped unexpectedly."),
         }
     }
 };

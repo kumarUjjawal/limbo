@@ -161,7 +161,8 @@ test "database open options support encryption" {
 
         _ = try conn.execute("CREATE TABLE secrets(value TEXT NOT NULL)");
         _ = try conn.execute("INSERT INTO secrets VALUES ('secret_data')");
-        _ = try conn.execute("PRAGMA wal_checkpoint(TRUNCATE)");
+        var checkpoint_rows = try conn.all(std.testing.allocator, "PRAGMA wal_checkpoint(TRUNCATE)");
+        defer checkpoint_rows.deinit(std.testing.allocator);
     }
 
     const db_file = try std.fs.openFileAbsolute(db_path, .{});

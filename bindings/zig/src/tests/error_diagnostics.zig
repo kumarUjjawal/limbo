@@ -48,13 +48,13 @@ test "row and rows misuse update diagnostics" {
     defer rows.deinit(std.testing.allocator);
 
     try std.testing.expectError(error.Misuse, rows.row(1));
-    try expectSyntheticDetails(error.Misuse);
+    try expectSyntheticMessage(error.Misuse, "row index 1 out of bounds (result set has 1 rows)");
 
     var row = try fixture.conn.queryRow(std.testing.allocator, "SELECT id, name FROM users");
     defer row.deinit(std.testing.allocator);
 
     try std.testing.expectError(error.Misuse, row.valueByName("missing"));
-    try expectSyntheticDetails(error.Misuse);
+    try expectSyntheticMessage(error.Misuse, "column 'missing' not found in row");
 }
 
 test "transaction misuse records diagnostics after finish" {
@@ -194,4 +194,15 @@ fn expectSyntheticDetails(expected: turso.Error) !void {
     try std.testing.expect(details.status_code == null);
     try std.testing.expect(details.message == null);
     try std.testing.expect((try turso.lastErrorMessageAlloc(std.testing.allocator)) == null);
+}
+
+fn expectSyntheticMessage(expected: turso.Error, message: []const u8) !void {
+    const details = turso.lastErrorDetails().?;
+    try std.testing.expect(details.code == expected);
+    try std.testing.expect(details.status_code == null);
+    try std.testing.expectEqualStrings(message, details.message.?);
+
+    const copied_message = (try turso.lastErrorMessageAlloc(std.testing.allocator)).?;
+    defer std.testing.allocator.free(copied_message);
+    try std.testing.expectEqualStrings(message, copied_message);
 }

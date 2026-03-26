@@ -86,6 +86,33 @@ test "connection execute surfaces SQL errors" {
     try std.testing.expectError(error.Database, result);
 }
 
+test "connection execute and run reject row-producing statements" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    try std.testing.expectError(error.Misuse, fixture.conn.execute("SELECT 1"));
+    try std.testing.expectError(error.Misuse, fixture.conn.run("SELECT 1"));
+    try std.testing.expectError(error.Misuse, fixture.conn.executeWith("SELECT ?1", .{
+        .positional = &.{.{ .integer = 1 }},
+    }));
+    try std.testing.expectError(error.Misuse, fixture.conn.runWith("SELECT :value", .{
+        .named = &.{.{ .name = ":value", .value = .{ .integer = 1 } }},
+    }));
+}
+
+test "connection execute and run complete returning statements before reporting misuse" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.execute("CREATE TABLE t (x INTEGER)");
+
+    try std.testing.expectError(error.Misuse, fixture.conn.execute("INSERT INTO t VALUES (1) RETURNING x"));
+    try expectCount(&fixture.conn, 1);
+
+    try std.testing.expectError(error.Misuse, fixture.conn.run("INSERT INTO t VALUES (2) RETURNING x"));
+    try expectCount(&fixture.conn, 2);
+}
+
 test "connection queryRow returns owned row" {
     var fixture = try support.openMemory();
     defer fixture.deinit();

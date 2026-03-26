@@ -53,16 +53,19 @@ pub const Statement = struct {
 
     /// Executes the statement to completion.
     ///
-    /// This is primarily useful for statements where rows do not need to be
-    /// inspected.
+    /// Row-producing statements return `error.Misuse` as soon as a row is
+    /// available. The current row remains available for explicit row handling.
+    /// Use `queryRow`, `get`, `all`, or explicit stepping for statements that
+    /// return rows.
     pub fn execute(self: *Statement) Error!u64 {
-        return self.executeLoopWithIo();
+        return self.executeNoRowsWithIo();
     }
 
     /// Resets the statement, applies `params`, and executes it to completion.
     ///
     /// This clears existing bindings before execution and resets the statement
     /// again before returning so the prepared statement can be reused safely.
+    /// Row-producing statements return `error.Misuse`.
     pub fn executeWith(self: *Statement, params: BindParams) (Allocator.Error || Error)!u64 {
         try self.reset();
         defer self.reset() catch {};
@@ -74,7 +77,8 @@ pub const Statement = struct {
     ///
     /// This discards any produced rows, continues from the current execution
     /// state using the current bindings, and resets the statement before
-    /// returning so it can be reused safely.
+    /// returning so it can be reused safely. Row-producing statements return
+    /// `error.Misuse`.
     pub fn run(self: *Statement) Error!RunResult {
         defer self.reset() catch {};
         return self.runCurrent();
@@ -84,6 +88,7 @@ pub const Statement = struct {
     ///
     /// This clears existing bindings before execution and resets the statement
     /// again before returning so the prepared statement can be reused safely.
+    /// Row-producing statements return `error.Misuse`.
     pub fn runWith(self: *Statement, params: BindParams) (Allocator.Error || Error)!RunResult {
         try self.reset();
         defer self.reset() catch {};
@@ -619,7 +624,27 @@ pub const Statement = struct {
         while (try self.step() == .row) {}
     }
 
-    fn executeLoopWithIo(self: *Statement) Error!u64 {
+    fn executeNoRowsWithIo(self: *Statement) Error!u64 {
+        const handle = self.handle orelse return errors.fail(error.Misuse);
+        if (try self.hasCurrentRow()) {
+            return errors.failMessage(error.Misuse, "unexpected row during execution");
+        }
+
+        while (true) {
+            switch (try self.step()) {
+                .done => {
+                    const rows_changed = c.turso_statement_n_change(handle);
+                    if (rows_changed < 0) {
+                        return errors.fail(error.NegativeValue);
+                    }
+                    return @intCast(rows_changed);
+                },
+                .row => return errors.failMessage(error.Misuse, "unexpected row during execution"),
+            }
+        }
+    }
+
+    fn executeDiscardingRowsLoopWithIo(self: *Statement) Error!u64 {
         const handle = self.handle orelse return errors.fail(error.Misuse);
         while (true) {
             var rows_changed: u64 = 0;
@@ -688,6 +713,12 @@ pub const Statement = struct {
         try io_driver.run(handle);
     }
 };
+
+/// Internal helper used by batch-style callers to execute a statement fully
+/// and discard any produced rows.
+pub fn executeDiscardingRows(statement: *Statement) Error!u64 {
+    return statement.executeDiscardingRowsLoopWithIo();
+}
 
 // Row text and blob pointers are only valid until the next statement
 // operation, so copy them before returning data to user code.

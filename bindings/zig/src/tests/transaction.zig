@@ -236,6 +236,40 @@ test "transaction methods reject use after finish" {
     try std.testing.expectError(error.Misuse, tx.rollback());
 }
 
+test "transaction execute and run reject row-producing statements" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    var tx = try fixture.conn.transaction();
+    defer tx.rollback() catch {};
+
+    try std.testing.expectError(error.Misuse, tx.execute("SELECT 1"));
+    try std.testing.expectError(error.Misuse, tx.run("SELECT 1"));
+    try std.testing.expectError(error.Misuse, tx.executeWith("SELECT ?1", .{
+        .positional = &.{.{ .integer = 1 }},
+    }));
+    try std.testing.expectError(error.Misuse, tx.runWith("SELECT :value", .{
+        .named = &.{.{ .name = ":value", .value = .{ .integer = 1 } }},
+    }));
+}
+
+test "transaction execute and run complete returning statements before reporting misuse" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.execute("CREATE TABLE t (x INTEGER)");
+
+    var tx = try fixture.conn.transaction();
+    defer tx.rollback() catch {};
+
+    try std.testing.expectError(error.Misuse, tx.execute("INSERT INTO t VALUES (1) RETURNING x"));
+    try std.testing.expectError(error.Misuse, tx.run("INSERT INTO t VALUES (2) RETURNING x"));
+
+    var row = try tx.queryRow(std.testing.allocator, "SELECT COUNT(*) FROM t");
+    defer row.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(i64, 2), try row.int(0));
+}
+
 test "transaction queryRow sees in-flight changes" {
     var fixture = try support.openMemory();
     defer fixture.deinit();
@@ -450,6 +484,29 @@ test "transaction executeBatch stops on error and keeps prior changes pending" {
     try tx.rollback();
     try std.testing.expect(try fixture.conn.isAutocommit());
     try expectQueryCount(&fixture.conn, 0);
+}
+
+test "transaction executeBatch drains row-producing statements and continues" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.execute("CREATE TABLE t (x INTEGER)");
+
+    var tx = try fixture.conn.transaction();
+    defer tx.rollback() catch {};
+
+    try tx.executeBatch(
+        \\INSERT INTO t VALUES (1);
+        \\SELECT x FROM t;
+        \\SELECT x FROM t WHERE 0;
+        \\PRAGMA user_version;
+        \\INSERT INTO t VALUES (2) RETURNING x;
+        \\INSERT INTO t VALUES (3);
+    );
+
+    var row = try tx.queryRow(std.testing.allocator, "SELECT COUNT(*) FROM t");
+    defer row.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(i64, 3), try row.int(0));
 }
 
 fn expectCount(conn: *turso.Connection, expected: i64) !void {

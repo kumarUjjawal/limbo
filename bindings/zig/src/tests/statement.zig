@@ -149,6 +149,44 @@ test "statement resets and re-executes" {
     });
 }
 
+test "statement execute rejects row-producing statements from the current row" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    var stmt = try fixture.conn.prepare(
+        \\SELECT 1 AS value
+        \\UNION ALL
+        \\SELECT 2 AS value
+    );
+    defer stmt.deinit();
+
+    try std.testing.expectEqual(turso.StepResult.row, try stmt.step());
+    try std.testing.expectError(error.Misuse, stmt.execute());
+    try std.testing.expectEqual(@as(i64, 1), try stmt.readInt(0));
+    try std.testing.expectEqual(turso.StepResult.row, try stmt.step());
+    try std.testing.expectEqual(@as(i64, 2), try stmt.readInt(0));
+    try std.testing.expectEqual(turso.StepResult.done, try stmt.step());
+}
+
+test "statement execute leaves returning row current and finalize completes changes" {
+    var fixture = try support.openMemory();
+    defer fixture.deinit();
+
+    _ = try fixture.conn.execute("CREATE TABLE t (x INTEGER)");
+
+    {
+        var stmt = try fixture.conn.prepare("INSERT INTO t VALUES (1) RETURNING x");
+        defer stmt.deinit();
+
+        try std.testing.expectError(error.Misuse, stmt.execute());
+        try std.testing.expectEqual(@as(i64, 1), try stmt.readInt(0));
+    }
+
+    var count_row = try fixture.conn.queryRow(std.testing.allocator, "SELECT COUNT(*) FROM t");
+    defer count_row.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(i64, 1), try count_row.int(0));
+}
+
 test "statement exposes parameter and column metadata" {
     var fixture = try support.openMemory();
     defer fixture.deinit();

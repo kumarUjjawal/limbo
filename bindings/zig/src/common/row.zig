@@ -50,8 +50,11 @@ pub const Row = struct {
                 return index;
             }
         }
-        errors.record(error.Misuse);
-        return error.Misuse;
+
+        var message_buf: [256]u8 = undefined;
+        const message = std.fmt.bufPrint(&message_buf, "column '{s}' not found in row", .{name}) catch
+            "column not found in row";
+        return misuseMessage(message);
     }
 
     /// Returns the value at `index`.
@@ -119,8 +122,17 @@ pub const Row = struct {
 
 fn indexOrError(len: usize, index: usize) error{Misuse}!usize {
     if (index >= len) {
-        errors.record(error.Misuse);
-        return error.Misuse;
+        var message_buf: [128]u8 = undefined;
+        const message = std.fmt.bufPrint(
+            &message_buf,
+            "column index {} out of bounds (row has {} columns)",
+            .{ index, len },
+        ) catch "column index out of bounds";
+        return misuseMessage(message);
     }
     return index;
+}
+
+fn misuseMessage(message: []const u8) error{Misuse} {
+    return @errorCast(errors.failMessage(error.Misuse, message));
 }

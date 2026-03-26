@@ -68,9 +68,20 @@ pub fn build(b: *std.Build) void {
 
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
+    const transaction_drop_panic = b.addExecutable(.{
+        .name = "turso-zig-transaction-drop-panic",
+        .root_module = createImportingModule(b, target, optimize, "src/tests/transaction_drop_panic.zig", mod),
+    });
+    dependOnSdkBuild(&transaction_drop_panic.step, sdk);
+    check_step.dependOn(&transaction_drop_panic.step);
+
+    const run_transaction_drop_panic = b.addRunArtifact(transaction_drop_panic);
+    run_transaction_drop_panic.expectExitCode(17);
+
     const test_step = b.step("test", "Run Zig binding tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+    test_step.dependOn(&run_transaction_drop_panic.step);
 }
 
 fn configureModule(

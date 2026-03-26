@@ -3,8 +3,8 @@
 //! Transactions borrow a connection handle and expose the same local, blocking
 //! execution model as `Connection`. Dropping an unfinished transaction records
 //! its configured cleanup action on the parent connection. The parent
-//! connection applies pending rollback or commit before the next connection-
-//! level execution helper runs.
+//! connection applies pending rollback, commit, or panic before the next
+//! connection-level execution helper runs.
 const std = @import("std");
 const c = @import("../c.zig").bindings;
 const errors = @import("../common/error.zig");
@@ -13,8 +13,9 @@ const IoOwner = @import("../common/io_driver.zig").IoOwner;
 const Row = @import("../common/row.zig").Row;
 const Rows = @import("../common/rows.zig").Rows;
 const RunResult = @import("../common/run_result.zig").RunResult;
-const BindParams = @import("statement.zig").BindParams;
-const Statement = @import("statement.zig").Statement;
+const statement_api = @import("statement.zig");
+const BindParams = statement_api.BindParams;
+const Statement = statement_api.Statement;
 
 const Allocator = std.mem.Allocator;
 const Error = errors.Error;
@@ -29,6 +30,7 @@ pub const PendingAction = enum {
     none,
     rollback,
     commit,
+    panic,
 };
 
 /// Transaction begin mode.
@@ -66,8 +68,8 @@ pub const Transaction = struct {
     /// Cleans up the transaction.
     ///
     /// If the transaction is still open, this records the configured drop
-    /// behavior for the parent connection. Pending cleanup is applied before
-    /// the next connection-level execution helper runs.
+    /// behavior for the parent connection. Pending rollback, commit, or panic
+    /// is applied before the next connection-level execution helper runs.
     pub fn deinit(self: *Transaction) void {
         defer self.io_owner.deinit();
         if (!self.open) {
@@ -88,11 +90,15 @@ pub const Transaction = struct {
             .rollback => self.pending_action.* = .rollback,
             .commit => self.pending_action.* = .commit,
             .ignore => self.pending_action.* = .none,
-            .panic => @panic("transaction dropped without being finished"),
+            .panic => self.pending_action.* = .panic,
         }
     }
 
     /// Executes a single SQL statement inside the transaction.
+    ///
+    /// For statements that return rows, use `queryRow`, `get`, `all`, or
+    /// explicit statement stepping instead. Row-producing statements return
+    /// `error.Misuse`.
     pub fn execute(self: *Transaction, sql: []const u8) (Allocator.Error || Error)!u64 {
         const handle = try self.ensureOpenHandle();
         return execOnHandle(handle, self.io_driver, sql);
@@ -101,7 +107,8 @@ pub const Transaction = struct {
     /// Executes a single SQL statement inside the transaction after applying `params`.
     ///
     /// For statements that return rows, use `queryRowWith`, `getWith`, `allWith`,
-    /// or explicit statement stepping instead.
+    /// or explicit statement stepping instead. Row-producing statements return
+    /// `error.Misuse`.
     pub fn executeWith(self: *Transaction, sql: []const u8, params: BindParams) (Allocator.Error || Error)!u64 {
         const handle = try self.ensureOpenHandle();
         var stmt = try prepareSingleOnHandle(handle, self.io_driver, self.io_owner, sql);
@@ -110,6 +117,8 @@ pub const Transaction = struct {
     }
 
     /// Executes a single SQL statement inside the transaction and returns result metadata.
+    ///
+    /// Row-producing statements return `error.Misuse`.
     pub fn run(self: *Transaction, sql: []const u8) (Allocator.Error || Error)!RunResult {
         const handle = try self.ensureOpenHandle();
         var stmt = try prepareSingleOnHandle(handle, self.io_driver, self.io_owner, sql);
@@ -118,6 +127,8 @@ pub const Transaction = struct {
     }
 
     /// Executes a single SQL statement inside the transaction with `params` and returns result metadata.
+    ///
+    /// Row-producing statements return `error.Misuse`.
     pub fn runWith(
         self: *Transaction,
         sql: []const u8,
@@ -137,7 +148,7 @@ pub const Transaction = struct {
             var prepared = result;
             defer prepared.statement.deinit();
 
-            _ = try prepared.statement.execute();
+            _ = try statement_api.executeDiscardingRows(&prepared.statement);
             remaining = remaining[prepared.tail_index..];
         }
     }
@@ -291,7 +302,7 @@ pub const Transaction = struct {
                 self.pending_action.* = .none;
                 self.open = false;
             },
-            .panic => @panic("transaction dropped unexpectedly"),
+            .panic => @panic("Transaction dropped unexpectedly."),
         }
     }
 
