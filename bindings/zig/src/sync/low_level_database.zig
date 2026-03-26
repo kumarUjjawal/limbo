@@ -54,22 +54,13 @@ pub const Database = struct {
             std.heap.c_allocator.destroy(self);
         }
 
-        fn installOwnedTransport(self: *State, transport: BlockingHttpTransport) void {
-            if (self.owned_transport) |*owned_transport| {
-                owned_transport.deinit();
+        fn setHttpHandler(self: *State, handler: ?HttpHandler) Error!void {
+            if (self.owned_transport != null) {
+                return errors.failMessage(
+                    error.Misuse,
+                    "cannot override the installed sync HTTP transport",
+                );
             }
-            var transport_value = transport;
-            transport_value.setProgressHook(.{
-                .context = self,
-                .notify = stepTransportProgress,
-            });
-            self.owned_transport = transport_value;
-            if (self.owned_transport) |*owned_transport| {
-                self.http_handler = owned_transport.handler();
-            }
-        }
-
-        fn setHttpHandler(self: *State, handler: ?HttpHandler) void {
             self.http_handler = handler;
         }
 
@@ -119,6 +110,11 @@ pub const Database = struct {
 
                 self.processIoItem(&item) catch |err| switch (err) {
                     error.AlreadyPoisoned => {},
+                    error.SyncIoHandlerRequired => {
+                        try item.poison(@errorName(err));
+                        try self.stepIoCallbacks();
+                        return error.SyncIoHandlerRequired;
+                    },
                     else => try item.poison(@errorName(err)),
                 };
                 try self.stepIoCallbacks();
@@ -182,17 +178,13 @@ pub const Database = struct {
         state.release();
     }
 
-    /// Installs the built-in blocking HTTP transport and retains it with the database state.
-    pub fn installOwnedTransport(self: *Database, transport: BlockingHttpTransport) Error!void {
+    /// Sets the optional HTTP handler used by low-level `driveIo`.
+    ///
+    /// High-level `sync.Database` instances already install their own blocking
+    /// transport and reject handler overrides.
+    pub fn setHttpHandler(self: *Database, handler: ?HttpHandler) Error!void {
         const state = self.state orelse return errors.fail(error.Misuse);
-        state.installOwnedTransport(transport);
-    }
-
-    /// Sets the optional HTTP handler used by low-level `driveIo` when no
-    /// owned transport is installed.
-    pub fn setHttpHandler(self: *Database, handler: ?HttpHandler) void {
-        const state = self.state orelse return;
-        state.setHttpHandler(handler);
+        try state.setHttpHandler(handler);
     }
 
     /// Starts the "open existing replica" operation.
@@ -260,7 +252,8 @@ pub const Database = struct {
     /// Processes all currently queued sync IO items.
     ///
     /// File-based full-read and full-write requests are handled internally.
-    /// HTTP requests require `setHttpHandler` or `installOwnedTransport`.
+    /// HTTP requests require `setHttpHandler` or the built-in transport used by
+    /// the blocking high-level sync database.
     pub fn driveIo(self: *Database) Error!void {
         const state = self.state orelse return errors.fail(error.Misuse);
         return state.driveIo();
@@ -296,6 +289,32 @@ pub const Database = struct {
         return .{ .handle = operation };
     }
 };
+
+/// Internal helper used by the blocking sync database to move the built-in
+/// HTTP transport into the shared low-level state.
+pub fn adoptOwnedTransport(self: *Database, transport: *BlockingHttpTransport) Error!void {
+    const state = self.state orelse return errors.fail(error.Misuse);
+    if (transport.state == null) {
+        return errors.fail(error.Misuse);
+    }
+
+    if (state.owned_transport) |*owned_transport| {
+        owned_transport.deinit();
+    }
+
+    // Move ownership into the shared state so the caller does not retain a
+    // second live transport handle.
+    state.owned_transport = transport.*;
+    transport.* = .{ .state = null };
+
+    if (state.owned_transport) |*owned_transport| {
+        owned_transport.setProgressHook(.{
+            .context = state,
+            .notify = stepTransportProgress,
+        });
+        state.http_handler = owned_transport.handler();
+    }
+}
 
 fn retainState(context: ?*anyopaque) void {
     const state: *Database.State = @ptrCast(@alignCast(context orelse return));

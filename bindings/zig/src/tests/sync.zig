@@ -148,6 +148,84 @@ test "sync database open and connect reuse local SQL surface" {
     });
 }
 
+test "sync low-level database reports missing HTTP handler directly" {
+    turso.clearLastErrorDetails();
+    defer turso.clearLastErrorDetails();
+
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const db_path = try support.tempPathAlloc(std.testing.allocator, &tmp_dir, "missing-http-handler.db");
+    defer std.testing.allocator.free(db_path);
+
+    var db = try turso.sync.LowLevelDatabase.init(db_path, .{
+        .bootstrap_if_empty = false,
+        .remote_url = "https://example.com",
+    });
+    defer db.deinit();
+
+    var create_operation = try db.createOperation();
+    defer create_operation.deinit();
+    try driveOperationWithDatabase(&db, &create_operation);
+
+    var connect_operation = try db.connectOperation();
+    defer connect_operation.deinit();
+    try driveOperationWithDatabase(&db, &connect_operation);
+
+    var conn = try db.extractConnection(&connect_operation);
+    defer conn.deinit();
+
+    _ = try conn.execute("CREATE TABLE t(x INTEGER)");
+    _ = try conn.execute("INSERT INTO t VALUES (1)");
+
+    var push_operation = try db.pushChangesOperation();
+    defer push_operation.deinit();
+
+    try std.testing.expectError(error.SyncIoHandlerRequired, driveOperationWithDatabase(&db, &push_operation));
+
+    const details = turso.lastErrorDetails().?;
+    try std.testing.expect(details.code == error.SyncIoHandlerRequired);
+}
+
+test "sync database rejects HTTP handler overrides" {
+    turso.clearLastErrorDetails();
+    defer turso.clearLastErrorDetails();
+
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const db_path = try support.tempPathAlloc(std.testing.allocator, &tmp_dir, "owned-http-handler.db");
+    defer std.testing.allocator.free(db_path);
+
+    var db = try turso.sync.Database.openWithOptions(db_path, .{
+        .bootstrap_if_empty = false,
+    });
+    defer db.deinit();
+
+    try std.testing.expectError(error.Misuse, db.lowLevel().setHttpHandler(null));
+
+    const message = (try turso.lastErrorMessageAlloc(std.testing.allocator)).?;
+    defer std.testing.allocator.free(message);
+    try std.testing.expectEqualStrings(
+        "cannot override the installed sync HTTP transport",
+        message,
+    );
+
+    var conn = try db.connect();
+    defer conn.deinit();
+
+    _ = try conn.execute("CREATE TABLE t(x INTEGER)");
+    _ = try conn.execute("INSERT INTO t VALUES (1)");
+
+    var row = try conn.queryRow(std.testing.allocator, "SELECT COUNT(*) FROM t");
+    defer row.deinit(std.testing.allocator);
+
+    try std.testing.expect(switch ((try row.value(0)).*) {
+        .integer => |count| count == 1,
+        else => false,
+    });
+}
+
 test "sync low-level operations expose result kinds and owned stats" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();

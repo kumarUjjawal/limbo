@@ -3,7 +3,8 @@ const std = @import("std");
 const errors = @import("../common/error.zig");
 const Connection = @import("../local/connection.zig").Connection;
 const BlockingHttpTransport = @import("http_transport.zig").BlockingHttpTransport;
-const LowLevelDatabase = @import("low_level_database.zig").Database;
+const low_level_database = @import("low_level_database.zig");
+const LowLevelDatabase = low_level_database.Database;
 const Operation = @import("operation.zig").Operation;
 const options = @import("options.zig");
 const Stats = @import("stats.zig").Stats;
@@ -34,11 +35,9 @@ pub const Database = struct {
         errdefer raw.deinit();
 
         var transport = try BlockingHttpTransport.init(db_options);
-        var transport_installed = false;
-        errdefer if (!transport_installed) transport.deinit();
+        errdefer transport.deinit();
 
-        try raw.installOwnedTransport(transport);
-        transport_installed = true;
+        try low_level_database.adoptOwnedTransport(&raw, &transport);
 
         var db: Database = .{
             .raw = raw,
